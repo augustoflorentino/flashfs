@@ -6,6 +6,7 @@ Name: flashfs
 Description: @PROJECT_DESCRIPTION@
 Version: @PROJECT_VERSION@
 Requires:
-Requires.private:
+Requires.private:@PC_REQUIRES@
 Libs: -L${libdir} -lflashfs
+Libs.private:@PC_LIBS@
 Cflags: -I${includedir} @PC_CFLAGS@

@@ -4,17 +4,57 @@ project(flashfs VERSION 0.1.0 DESCRIPTION "Read-only reader for embedded flash f
 option(FLASHFS_BUILD_TESTS "Build tests" OFF)
 option(FLASHFS_BUILD_EXAMPLES "Build examples" OFF)
 option(FLASHFS_BUILD_FUZZ "Build libFuzzer targets" OFF)
+option(FLASHFS_WITH_ZLIB "Decode zlib (JFFS2, cramfs) when zlib is found" ON)
+option(FLASHFS_WITH_LZMA "Decode JFFS2 lzma when liblzma is found" ON)
+option(FLASHFS_WITH_LZO "Decode JFFS2 lzo when liblzo2 is found" ON)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
-add_library(flashfs src/flashfs.c)
+set(FLASHFS_SOURCES src/flashfs.c src/source.c src/tree.c src/decode.c src/jffs2.c src/cramfs.c src/ubi.c)
+add_library(flashfs ${FLASHFS_SOURCES})
 add_library(flashfs::flashfs ALIAS flashfs)
+
+set(FLASHFS_CODECS "")
+set(PC_REQUIRES "")
+set(PC_LIBS "")
+if(FLASHFS_WITH_ZLIB)
+    find_package(ZLIB)
+    if(ZLIB_FOUND)
+        target_link_libraries(flashfs PRIVATE ZLIB::ZLIB)
+        target_compile_definitions(flashfs PRIVATE MTDF_HAVE_ZLIB)
+        list(APPEND FLASHFS_CODECS zlib)
+        string(APPEND PC_REQUIRES " zlib")
+    endif()
+endif()
+if(FLASHFS_WITH_LZMA)
+    find_package(LibLZMA)
+    if(LIBLZMA_FOUND)
+        target_link_libraries(flashfs PRIVATE LibLZMA::LibLZMA)
+        target_compile_definitions(flashfs PRIVATE MTDF_HAVE_LZMA)
+        list(APPEND FLASHFS_CODECS lzma)
+        string(APPEND PC_REQUIRES " liblzma")
+    endif()
+endif()
+if(FLASHFS_WITH_LZO)
+    find_path(LZO2_INCLUDE_DIR lzo/lzo1x.h)
+    find_library(LZO2_LIBRARY NAMES lzo2)
+    if(LZO2_INCLUDE_DIR AND LZO2_LIBRARY)
+        target_include_directories(flashfs PRIVATE ${LZO2_INCLUDE_DIR})
+        target_link_libraries(flashfs PRIVATE ${LZO2_LIBRARY})
+        target_compile_definitions(flashfs PRIVATE MTDF_HAVE_LZO)
+        list(APPEND FLASHFS_CODECS lzo)
+        string(APPEND PC_LIBS " -llzo2")
+    endif()
+endif()
+message(STATUS "flashfs codecs: ${FLASHFS_CODECS}")
 target_include_directories(flashfs PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 set_target_properties(flashfs PROPERTIES
     C_STANDARD 99
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
     C_VISIBILITY_PRESET hidden
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR})
