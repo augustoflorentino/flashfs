@@ -87,11 +87,15 @@ install(FILES ${PROJECT_BINARY_DIR}/flashfs.pc
 
 if(FLASHFS_BUILD_TESTS)
     enable_testing()
-    add_executable(test_flashfs tests/test_flashfs.c)
-    target_link_libraries(test_flashfs PRIVATE flashfs)
-    add_test(NAME flashfs COMMAND test_flashfs)
     add_library(flashfs_header_check OBJECT tests/header_check.c)
     target_include_directories(flashfs_header_check PRIVATE include)
+
+    file(GLOB FLASHFS_PARITY_IMAGES ${PROJECT_SOURCE_DIR}/tests/parity/data/*.img)
+    list(JOIN FLASHFS_PARITY_IMAGES "\n" FLASHFS_PARITY_LIST)
+    file(WRITE ${PROJECT_BINARY_DIR}/parity.list "${FLASHFS_PARITY_LIST}\n")
+    add_executable(test_parity tests/parity/test_parity.c)
+    target_link_libraries(test_parity PRIVATE flashfs)
+    add_test(NAME parity COMMAND test_parity ${PROJECT_BINARY_DIR}/parity.list)
 endif()
 
 if(FLASHFS_BUILD_EXAMPLES)

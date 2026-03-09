@@ -1,3 +1,3 @@
 #include "flashfs/flashfs.h"
 
-typedef mtdf_buf_t header_check_t;
+typedef mtdf_options_t header_check_t;

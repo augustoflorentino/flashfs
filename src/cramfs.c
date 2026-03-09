@@ -228,8 +228,10 @@ static int mtdf_c_directory(mtdf_fs_t *fs, mtdf_cramfs_t *c, mtdf_cwalk_t dir)
     int seen;
     int status;
 
-    if (dir.size == 0)
+    if (dir.size == 0) {
+        fs->report.bad_structure += (uint64_t)(dir.offset > c->size);
         return MTDF_OK;
+    }
     status = mtdf_c_seen(fs, c, dir.offset, &seen);
     if (status != MTDF_OK)
         return status;

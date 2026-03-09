@@ -74,6 +74,8 @@ int mtdf_inflate(mtdf_fs_t *fs, const uint8_t *in, size_t in_len, uint8_t *out, 
     z = inflate(strm, Z_FINISH);
     if (z == Z_MEM_ERROR)
         return MTDF_ERR_NOMEM;
+    if (z == Z_DATA_ERROR || z == Z_NEED_DICT || z == Z_STREAM_ERROR)
+        return mtdf_fail(fs, MTDF_ERR_CORRUPT, "zlib: %s", strm->msg != NULL ? strm->msg : "bad stream");
     if (strm->avail_out != 0)
         return mtdf_fail(fs, MTDF_ERR_CORRUPT, "zlib block decodes to %zu bytes, expected %zu",
                          out_len - strm->avail_out, out_len);
