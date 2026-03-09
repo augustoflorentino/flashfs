@@ -173,7 +173,7 @@ static void entry_line(mtdf_fs_t *fs, const char *path, size_t path_len, mtdf_in
         return;
     }
     python_name_hex(path_hex, path, path_len);
-    n = sprintf(line, "%s %o %u %u %s", kind(st.type), st.mode, st.uid, st.gid, path_hex);
+    n = snprintf(line, sizeof(line), "%s %o %u %u %s", kind(st.type), st.mode, st.uid, st.gid, path_hex);
     if (st.type == MTDF_TYPE_FILE) {
         data = content(fs, ino, st.size, &out->failed);
         if (data == NULL)
@@ -181,14 +181,14 @@ static void entry_line(mtdf_fs_t *fs, const char *path, size_t path_len, mtdf_in
         sha256(data, (size_t)st.size, digest);
         free(data);
         hex(digest_hex, digest, 32);
-        sprintf(line + n, " %llu %s", (unsigned long long)st.size, digest_hex);
+        snprintf(line + n, sizeof(line) - (size_t)n, " %llu %s", (unsigned long long)st.size, digest_hex);
     } else if (st.type == MTDF_TYPE_LINK) {
         if (mtdf_readlink(fs, ino, target, sizeof(target), &len) != MTDF_OK) {
             out->failed = 1;
             return;
         }
         python_name_hex(path_hex, target, len);
-        sprintf(line + n, " %s", path_hex);
+        snprintf(line + n, sizeof(line) - (size_t)n, " %s", path_hex);
     }
     add_line(out, line);
 }
@@ -236,7 +236,7 @@ static void volume_line(mtdf_fs_t *fs, const mtdf_dirent_t *e, lines_t *out)
         return;
     python_name_hex(name_hex, e->name, e->name_len);
     hex(digest_hex, digest, 32);
-    sprintf(line, "volume %s %llu %s", name_hex, (unsigned long long)len, digest_hex);
+    snprintf(line, sizeof(line), "volume %s %llu %s", name_hex, (unsigned long long)len, digest_hex);
     add_line(out, line);
 }
 
@@ -286,8 +286,7 @@ static int load_expected(const char *path, char *format, size_t format_len, limi
         return -1;
     }
     line[strcspn(line, "\n")] = 0;
-    strncpy(format, line + 7, format_len - 1);
-    format[format_len - 1] = 0;
+    snprintf(format, format_len, "%.31s", line + 7);
     if (fgets(line, sizeof(line), f) == NULL ||
         sscanf(line, "limits %llu %llu %llu", &limits->total, &limits->file, &limits->entries) != 3) {
         fclose(f);
