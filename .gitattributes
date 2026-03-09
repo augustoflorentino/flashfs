@@ -1,0 +1,2 @@
+tests/data/*.img binary
+tests/parity/data/*.img binary

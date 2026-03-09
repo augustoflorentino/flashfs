@@ -154,6 +154,8 @@ static int mtdf_detect(mtdf_fs_t *fs, uint32_t format)
         if (format != MTDF_FORMAT_AUTO && format != formats[i])
             continue;
         status = opens[i](fs, format != MTDF_FORMAT_AUTO);
+        if (fs->io_failed)
+            return MTDF_ERR_IO;
         if (status != MTDF_ERR_FORMAT)
             return status;
     }
@@ -276,7 +278,9 @@ static int mtdf_read_entry(mtdf_fs_t *fs, const mtdf_entry_t *entry, uint64_t of
     status = mtdf_charge(fs, len);
     if (status != MTDF_OK || len == 0)
         return status;
-    return fs->driver->read(fs, entry, offset, buf, len);
+    fs->io_failed = 0;
+    status = fs->driver->read(fs, entry, offset, buf, len);
+    return fs->io_failed ? MTDF_ERR_IO : status;
 }
 
 int mtdf_read(mtdf_fs_t *fs, mtdf_ino_t ino, uint64_t offset, void *buf, size_t buf_len, size_t *out_read)

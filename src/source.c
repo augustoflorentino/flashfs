@@ -2,8 +2,10 @@
 
 static int mtdf_src_fill(mtdf_fs_t *fs, uint64_t offset, size_t len, uint8_t *dst)
 {
-    if (fs->read_fn(fs->read_ctx, offset, dst, len) != 0)
+    if (fs->read_fn(fs->read_ctx, offset, dst, len) != 0) {
+        fs->io_failed = 1;
         return mtdf_fail(fs, MTDF_ERR_IO, "read of %zu bytes at %llu failed", len, (unsigned long long)offset);
+    }
     return MTDF_OK;
 }
 
