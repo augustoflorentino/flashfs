@@ -79,6 +79,14 @@ static int entry(mtdf_fs_t *fs, const char *path, size_t path_len, mtdf_ino_t in
     return status;
 }
 
+static int memory_read(void *ctx, uint64_t offset, void *buf, size_t len)
+{
+    const unsigned char *image = ctx;
+
+    memcpy(buf, image + offset, len);
+    return 0;
+}
+
 static int walk(mtdf_fs_t *fs, mtdf_ino_t dir, char *path, size_t len)
 {
     mtdf_dirent_t e;
@@ -103,28 +111,30 @@ int main(int argc, char **argv)
     mtdf_report_t r;
     mtdf_fs_t *fs;
     unsigned char *image;
+    const char *name = argv[argc - 1];
+    int callback = argc == 3 && strcmp(argv[1], "-c") == 0;
     size_t len;
     int status;
 
-    if (argc != 2 || (image = slurp(argv[1], &len)) == NULL) {
-        fprintf(stderr, "usage: dump <image>\n");
+    if ((argc != 2 && !callback) || (image = slurp(name, &len)) == NULL) {
+        fprintf(stderr, "usage: dump [-c] <image>\n");
         return 2;
     }
     memset(&opts, 0, sizeof(opts));
     opts.max_total_bytes = UINT64_MAX;
-    status = mtdf_open_mem(image, len, &opts, &fs);
+    status = callback ? mtdf_open_cb(memory_read, image, len, &opts, &fs) : mtdf_open_mem(image, len, &opts, &fs);
     if (status == MTDF_OK) {
         mtdf_report(fs, &r);
         if (r.bad_header + r.bad_node_crc + r.bad_data_crc + r.bad_image_crc + r.bad_structure + r.orphans +
                 r.loops + r.duplicates + r.unknown !=
             0)
-            fprintf(stderr, "dump: %s reports damage\n", argv[1]);
+            fprintf(stderr, "dump: %s reports damage\n", name);
         status = walk(fs, MTDF_ROOT, path, 0);
         if (status != MTDF_OK)
-            fprintf(stderr, "dump: %s: %s %s\n", argv[1], mtdf_strerror(status), mtdf_detail(fs));
+            fprintf(stderr, "dump: %s: %s %s\n", name, mtdf_strerror(status), mtdf_detail(fs));
         mtdf_close(fs);
     } else {
-        fprintf(stderr, "dump: %s: %s\n", argv[1], mtdf_strerror(status));
+        fprintf(stderr, "dump: %s: %s\n", name, mtdf_strerror(status));
     }
     free(image);
     return status == MTDF_OK ? 0 : 1;

@@ -233,6 +233,7 @@ static int mtdf_j_inode_parse(mtdf_fs_t *fs, mtdf_jffs2_t *j, uint64_t pos, uint
 {
     const uint8_t *n;
     mtdf_jnode_t node;
+    uint32_t want;
     uint32_t crc;
     int status;
 
@@ -245,14 +246,14 @@ static int mtdf_j_inode_parse(mtdf_fs_t *fs, mtdf_jffs2_t *j, uint64_t pos, uint
         return fs->report.bad_node_crc++, MTDF_OK;
     mtdf_j_inode_fields(n, j->big, &node);
     node.pos = pos;
-    crc = mtdf_get32(n + 60, j->big);
+    want = mtdf_get32(n + 60, j->big);
     if (node.dsize > MTDF_J_MAX_DATA || node.csize > MTDF_J_MAX_DATA || node.csize > totlen - MTDF_J_INODE_SIZE)
         return fs->report.bad_structure++, MTDF_OK;
     if (node.csize > 0) {
         status = mtdf_src_crc(fs, pos + MTDF_J_INODE_SIZE, node.csize, 0, &crc);
         if (status != MTDF_OK)
             return status;
-        if (crc != mtdf_get32(n + 60, j->big))
+        if (crc != want)
             return fs->report.bad_data_crc++, MTDF_OK;
     }
     status = mtdf_count(fs, 1);

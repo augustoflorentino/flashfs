@@ -248,6 +248,50 @@ static void test_open_cb(void)
     buf_free(&b);
 }
 
+static void test_open_cb_window(void)
+{
+    static unsigned char scratch[8192];
+    unsigned char data[4000];
+    char name[16];
+    mtdf_report_t from_mem;
+    mtdf_report_t from_cb;
+    mtdf_fs_t *mem;
+    mtdf_fs_t *cb;
+    source_t src;
+    buf_t b = {0};
+    uint64_t bytes_mem = 0;
+    uint64_t bytes_cb = 0;
+    uint32_t f;
+    size_t i;
+
+    jb_cleanmarker(&b, 1);
+    for (f = 0; f < 100; f++) {
+        for (i = 0; i < sizeof(data); i++)
+            data[i] = (unsigned char)(f * 31 + i * 7 + i / 251);
+        sprintf(name, "f%03u", f);
+        jb_dirent(&b, 1, 1, f + 2, 1, name, JB_DT_REG);
+        jb_file(&b, 1, f + 2, 0100644, data, sizeof(data));
+    }
+    CHECK(b.len > 3 * 128 * 1024);
+    memset(&src, 0, sizeof(src));
+    src.image = &b;
+    src.fail_at = -1;
+    CHECK_EQ(mtdf_open_mem(b.data, b.len, NULL, &mem), MTDF_OK);
+    CHECK_EQ(mtdf_open_cb(source_read, &src, b.len, NULL, &cb), MTDF_OK);
+    if (mem != NULL && cb != NULL) {
+        mtdf_report(mem, &from_mem);
+        mtdf_report(cb, &from_cb);
+        CHECK(memcmp(&from_mem, &from_cb, sizeof(from_mem)) == 0);
+        CHECK_EQ(from_cb.bad_data_crc, 0);
+        CHECK_EQ(walk_all(mem, MTDF_ROOT, scratch, sizeof(scratch), UINT64_MAX, &bytes_mem), MTDF_OK);
+        CHECK_EQ(walk_all(cb, MTDF_ROOT, scratch, sizeof(scratch), UINT64_MAX, &bytes_cb), MTDF_OK);
+        CHECK(bytes_mem == 100 * sizeof(data) && bytes_cb == bytes_mem);
+    }
+    mtdf_close(mem);
+    mtdf_close(cb);
+    buf_free(&b);
+}
+
 static void test_lookup(void)
 {
     char long_path[MTDF_PATH_MAX + 2];
@@ -513,6 +557,7 @@ int main(int argc, char **argv)
     test_fixed_images();
     test_ubi();
     test_open_cb();
+    test_open_cb_window();
     test_lookup();
     test_readdir_and_stat();
     test_read_and_readlink();

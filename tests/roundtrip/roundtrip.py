@@ -146,9 +146,13 @@ def expected(root):
     return sorted(lines)
 
 def actual(dump, image):
+    """The listing from memory; reading through the callback window must print the same."""
     out = subprocess.run([dump, image], capture_output=True, check=False)
     if out.returncode != 0 or out.stderr:
         return None, out.stderr.decode(errors="replace").strip()
+    through_cb = subprocess.run([dump, "-c", image], capture_output=True, check=False)
+    if (through_cb.returncode, through_cb.stdout, through_cb.stderr) != (0, out.stdout, b""):
+        return None, "open_cb differs from open_mem: " + through_cb.stderr.decode(errors="replace").strip()
     lines = []
     for line in out.stdout.decode().splitlines():
         path, mode, uid, gid, dev, size, digest, target = line.split(" ")

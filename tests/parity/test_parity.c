@@ -20,7 +20,24 @@ typedef struct lines {
     size_t count;
     int failed;
     int damaged;
+    int status;
+    mtdf_report_t report;
 } lines_t;
+
+typedef struct memory_source {
+    const unsigned char *data;
+    size_t len;
+} memory_source_t;
+
+static int memory_read(void *ctx, uint64_t offset, void *buf, size_t len)
+{
+    const memory_source_t *m = ctx;
+
+    if (offset > m->len || len > m->len - offset)
+        return -1;
+    memcpy(buf, m->data + offset, len);
+    return 0;
+}
 
 static int verbose;
 
@@ -320,8 +337,10 @@ static int damaged(const mtdf_fs_t *fs)
            r.loops || r.duplicates || r.unknown;
 }
 
-static void actual_lines(const unsigned char *image, size_t len, int format, const limits_t *limits, lines_t *out)
+static void actual_lines(const unsigned char *image, size_t len, int format, const limits_t *limits, int callback,
+                         lines_t *out)
 {
+    memory_source_t source;
     mtdf_options_t opts;
     mtdf_fs_t *fs;
     mtdf_dirent_t e;
@@ -334,7 +353,10 @@ static void actual_lines(const unsigned char *image, size_t len, int format, con
     opts.max_total_bytes = limits->total;
     opts.max_file_bytes = limits->file;
     opts.max_entries = limits->entries;
-    status = mtdf_open_mem(image, len, &opts, &fs);
+    source.data = image;
+    source.len = len;
+    status = callback ? mtdf_open_cb(memory_read, &source, len, &opts, &fs) : mtdf_open_mem(image, len, &opts, &fs);
+    out->status = status;
     if (status != MTDF_OK) {
         if (verbose)
             printf("    open: %s\n", mtdf_strerror(status));
@@ -342,6 +364,7 @@ static void actual_lines(const unsigned char *image, size_t len, int format, con
         return;
     }
     out->damaged = damaged(fs);
+    mtdf_report(fs, &out->report);
     if (format == MTDF_FORMAT_UBI) {
         while (mtdf_readdir(fs, MTDF_ROOT, &cookie, &e) == MTDF_OK)
             volume_line(fs, &e, out);
@@ -365,14 +388,19 @@ static int check(const char *image_path)
     char expected_path[4096];
     char format[32];
     limits_t limits;
-    lines_t want = {{0}, 0, 0, 0};
-    lines_t got = {{0}, 0, 0, 0};
+    static lines_t want;
+    static lines_t got;
+    static lines_t through_cb;
     unsigned char *image;
     size_t len = 0;
     size_t i;
     int python_error;
     int same;
+    int same_cb;
 
+    memset(&want, 0, sizeof(want));
+    memset(&got, 0, sizeof(got));
+    memset(&through_cb, 0, sizeof(through_cb));
     snprintf(expected_path, sizeof(expected_path), "%.*s.txt", (int)(strlen(image_path) - 4), image_path);
     image = slurp(image_path, &len);
     if (image == NULL || load_expected(expected_path, format, sizeof(format), &limits, &want) != 0) {
@@ -380,7 +408,8 @@ static int check(const char *image_path)
         free(image);
         return 1;
     }
-    actual_lines(image, len, format_id(format), &limits, &got);
+    actual_lines(image, len, format_id(format), &limits, 0, &got);
+    actual_lines(image, len, format_id(format), &limits, 1, &through_cb);
     free(image);
     python_error = want.count == 1 && strncmp(want.text[0], "error ", 6) == 0;
     qsort(got.text, got.count, sizeof(char *), compare_lines);
@@ -393,9 +422,20 @@ static int check(const char *image_path)
         show("python", &want);
         show("flashfs", &got);
     }
+    qsort(through_cb.text, through_cb.count, sizeof(char *), compare_lines);
+    same_cb = through_cb.status == got.status && through_cb.count == got.count &&
+              memcmp(&through_cb.report, &got.report, sizeof(got.report)) == 0;
+    for (i = 0; same_cb && i < got.count; i++)
+        same_cb = strcmp(through_cb.text[i], got.text[i]) == 0;
+    if (!same_cb) {
+        printf("FAIL %s (%s): open_cb differs from open_mem\n", image_path, format);
+        show("open_mem", &got);
+        show("open_cb", &through_cb);
+    }
     free_lines(&want);
     free_lines(&got);
-    return !same;
+    free_lines(&through_cb);
+    return !same || !same_cb;
 }
 
 int main(int argc, char **argv)
