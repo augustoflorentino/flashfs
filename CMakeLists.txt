@@ -106,8 +106,10 @@ if(FLASHFS_BUILD_TESTS)
 endif()
 
 if(FLASHFS_BUILD_EXAMPLES)
-    add_executable(flashfs_basic examples/basic.c)
-    target_link_libraries(flashfs_basic PRIVATE flashfs)
+    foreach(example mtdf-ls mtdf-extract)
+        add_executable(${example} examples/${example}.c)
+        target_link_libraries(${example} PRIVATE flashfs)
+    endforeach()
 endif()
 
 if(FLASHFS_BUILD_FUZZ)
