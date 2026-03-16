@@ -461,6 +461,16 @@ static void test_jffs2_log(void)
         jb_put32(dev, (65u & 0xffu) | (4u << 8) | ((65u & ~0xffu) << 12), big);
         jb_dirent(&b, big, 1, 4, 1, "tty", 2);
         jb_file(&b, big, 4, 0020620, dev, 4);
+        memset(&in, 0, sizeof(in));
+        in.ino = 6;
+        in.version = 1;
+        in.mode = 0120777;
+        in.isize = 10;
+        in.dsize = 3;
+        in.payload = "abc";
+        in.payload_len = 3;
+        jb_dirent(&b, big, 1, 6, 1, "short", JB_DT_LNK);
+        jb_inode(&b, big, &in);
         at = jb_dirent(&b, big, 1, 5, 1, "obsolete", JB_DT_REG);
         b.data[at + (big ? 2 : 3)] &= (unsigned char)~0x20u;
 
@@ -476,6 +486,12 @@ static void test_jffs2_log(void)
         CHECK_EQ(mtdf_stat(fs, ino, &st), MTDF_OK);
         CHECK_EQ(st.type, MTDF_TYPE_CHR);
         CHECK(st.dev_major == 4 && st.dev_minor == 65);
+        CHECK_EQ(mtdf_lookup(fs, "/short", 0, &ino), MTDF_OK);
+        CHECK_EQ(mtdf_stat(fs, ino, &st), MTDF_OK);
+        CHECK_EQ(st.size, 10);
+        CHECK_EQ(mtdf_readlink(fs, ino, (char *)chunk, 10, &got), MTDF_ERR_RANGE);
+        CHECK_EQ(mtdf_readlink(fs, ino, (char *)chunk, 11, &got), MTDF_OK);
+        CHECK(got == 3 && strcmp((char *)chunk, "abc") == 0);
         CHECK_EQ(mtdf_report(fs, &report), MTDF_OK);
         CHECK_EQ(report.obsolete, 1);
         CHECK_EQ(report.superseded, 1);

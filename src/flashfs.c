@@ -323,6 +323,7 @@ int mtdf_readlink(mtdf_fs_t *fs, mtdf_ino_t ino, char *buf, size_t buf_len, size
     status = mtdf_read_entry(fs, entry, 0, (uint8_t *)buf, *out_len);
     if (status != MTDF_OK)
         return status;
+    *out_len = mtdf_strnlen(buf, *out_len);
     buf[*out_len] = '\0';
     return MTDF_OK;
 }

@@ -86,12 +86,12 @@ static int mtdf_c_superblock(mtdf_fs_t *fs, uint64_t base, mtdf_cramfs_t *c, mtd
     mtdf_c_inode(sb + 64, c->big, root);
     if (c->flags & ~MTDF_C_SUPPORTED_FLAGS)
         return mtdf_fail(fs, MTDF_ERR_FORMAT, "cramfs flags 0x%x not supported", c->flags);
-    if (size < MTDF_C_SUPER || size > fs->len - base)
+    if (size < base + MTDF_C_SUPER || size > fs->len)
         return mtdf_fail(fs, MTDF_ERR_FORMAT, "cramfs size %u outside the image", size);
     if ((root->mode & MTDF_S_IFMT) != MTDF_S_IFDIR)
         return mtdf_fail(fs, MTDF_ERR_FORMAT, "cramfs root is not a directory");
     c->base = base;
-    c->size = base + size;
+    c->size = size;
     return MTDF_OK;
 }
 
