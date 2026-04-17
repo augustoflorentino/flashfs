@@ -1,27 +1,53 @@
 #define MTDF_IMPLEMENTATION
 #include "flashfs/flashfs.h"
 
-static int count_piece(void *ctx, const unsigned char *piece, size_t piece_len)
-{
-    (void)piece;
-    (void)piece_len;
-    (*(int *)ctx)++;
-    return 0;
-}
+#include <stdio.h>
+#include <stdlib.h>
 
-int main(void)
+static unsigned char image[1 << 20];
+
+static int walk(mtdf_fs_t *fs, mtdf_ino_t dir, unsigned long *entries)
 {
-    mtdf_buf_t *buf = NULL;
-    int pieces = 0;
+    static unsigned char scratch[4096];
+    mtdf_dirent_t e;
+    mtdf_stat_t st;
+    uint64_t cookie = 0;
+    uint64_t off;
+    size_t got;
     int status;
 
-    status = mtdf_buf_create(NULL, NULL, NULL, &buf);
-    if (status == MTDF_OK)
-        status = mtdf_buf_append(buf, (const unsigned char *)"a\nb", 3);
-    if (status == MTDF_OK)
-        status = mtdf_buf_split(buf, '\n', count_piece, &pieces);
-    if (mtdf_buf_len(buf) != 3 || mtdf_buf_data(buf) == NULL || mtdf_strerror(status) == NULL)
-        status = MTDF_ERR_ARG;
-    mtdf_buf_destroy(buf);
-    return status == MTDF_OK && pieces == 2 ? 0 : 1;
+    while ((status = mtdf_readdir(fs, dir, &cookie, &e)) == MTDF_OK) {
+        ++*entries;
+        if ((status = mtdf_stat(fs, e.ino, &st)) != MTDF_OK)
+            return status;
+        if (st.type == MTDF_TYPE_DIR && (status = walk(fs, e.ino, entries)) != MTDF_OK)
+            return status;
+        for (off = 0; st.type == MTDF_TYPE_FILE && off < st.size; off += got)
+            if ((status = mtdf_read(fs, e.ino, off, scratch, sizeof(scratch), &got)) != MTDF_OK || got == 0)
+                return status != MTDF_OK ? status : MTDF_ERR_FORMAT;
+    }
+    return status == MTDF_END ? MTDF_OK : status;
+}
+
+int main(int argc, char **argv)
+{
+    unsigned long entries = 0;
+    mtdf_fs_t *fs;
+    size_t len;
+    FILE *f;
+    int status;
+
+    if (argc != 2 || (f = fopen(argv[1], "rb")) == NULL) {
+        fprintf(stderr, "usage: single_file <image>\n");
+        return 2;
+    }
+    len = fread(image, 1, sizeof(image), f);
+    fclose(f);
+    status = mtdf_open_mem(image, len, NULL, &fs);
+    if (status == MTDF_OK) {
+        status = walk(fs, MTDF_ROOT, &entries);
+        mtdf_close(fs);
+    }
+    printf("%s: %s, %lu entries\n", argv[1], mtdf_strerror(status), entries);
+    return status == MTDF_OK && entries > 0 ? 0 : 1;
 }

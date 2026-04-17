@@ -545,15 +545,8 @@ static void test_jffs2_log(void)
     buf_free(&b);
 }
 
-int main(int argc, char **argv)
+static void test_with_codecs(void)
 {
-    if (argc < 2) {
-        fprintf(stderr, "usage: test_flashfs <tests/data>\n");
-        return 2;
-    }
-    data_dir = argv[1];
-    test_strings();
-    test_open_arguments();
     test_fixed_images();
     test_ubi();
     test_open_cb();
@@ -563,6 +556,57 @@ int main(int argc, char **argv)
     test_read_and_readlink();
     test_budget();
     test_jffs2_log();
+}
+
+static void test_without_codecs(void)
+{
+    static const struct {
+        const char *name;
+        unsigned needs;
+    } images[] = {
+        {"jffs2-le-zlib.img", MTDF_FEATURE_ZLIB}, {"jffs2-be-lzma.img", MTDF_FEATURE_LZMA},
+        {"cramfs-le.img", MTDF_FEATURE_ZLIB},     {"jffs2-le-rtime.img", 0},
+        {"jffs2-be-none.img", 0},                 {"ubi.img", 0},
+    };
+    static unsigned char scratch[65536];
+    unsigned features = mtdf_features();
+    mtdf_info_t info;
+    mtdf_fs_t *fs;
+    buf_t b = {0};
+    uint64_t bytes;
+    size_t i;
+    int want;
+
+    for (i = 0; i < sizeof(images) / sizeof(images[0]); i++) {
+        if (open_image(&b, images[i].name, &fs) != MTDF_OK) {
+            printf("%s does not open\n", images[i].name);
+            test_failures++;
+            continue;
+        }
+        CHECK_EQ(mtdf_info(fs, &info), MTDF_OK);
+        CHECK(info.entries >= 3);
+        bytes = 0;
+        want = images[i].needs & ~features ? MTDF_ERR_UNSUPPORTED : MTDF_OK;
+        CHECK_EQ(walk_all(fs, MTDF_ROOT, scratch, sizeof(scratch), UINT64_MAX, &bytes), want);
+        mtdf_close(fs);
+    }
+    buf_free(&b);
+}
+
+int main(int argc, char **argv)
+{
+    if (argc < 2) {
+        fprintf(stderr, "usage: test_flashfs <tests/data>\n");
+        return 2;
+    }
+    data_dir = argv[1];
+    test_strings();
+    test_open_arguments();
+    test_without_codecs();
+    if ((mtdf_features() & (MTDF_FEATURE_ZLIB | MTDF_FEATURE_LZMA)) == (MTDF_FEATURE_ZLIB | MTDF_FEATURE_LZMA))
+        test_with_codecs();
+    else
+        printf("features 0x%x: codec-free checks only\n", mtdf_features());
     if (test_failures != 0) {
         printf("test_flashfs: %d checks failed\n", test_failures);
         return 1;

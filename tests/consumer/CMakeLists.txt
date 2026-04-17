@@ -3,5 +3,5 @@ project(flashfs_consumer LANGUAGES C)
 
 find_package(flashfs REQUIRED)
 
-add_executable(consumer ${CMAKE_CURRENT_SOURCE_DIR}/../../examples/basic.c)
+add_executable(consumer ${CMAKE_CURRENT_SOURCE_DIR}/../../examples/mtdf-ls.c)
 target_link_libraries(consumer PRIVATE flashfs::flashfs)
