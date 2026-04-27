@@ -1,0 +1,30 @@
+name: An image flashfs reads wrong
+description: Files missing, wrong contents, or damage reported on an image that is fine
+body:
+  - type: dropdown
+    id: format
+    attributes:
+      label: Format
+      options: [JFFS2, cramfs, UBI, UBIFS, UBIFS inside UBI]
+    validations:
+      required: true
+  - type: input
+    id: source
+    attributes:
+      label: Where the image comes from
+      description: Vendor, model and firmware version, or a download link. Public images only.
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: mtdf-ls output and mtdf_report
+      description: The first lines of examples/mtdf-ls on the image, and the counters of mtdf_report
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What the kernel or another tool shows
+      description: For example the same path after mounting the image with mtdram, or jefferson and ubi_reader output
