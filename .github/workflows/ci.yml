@@ -19,28 +19,38 @@ jobs:
       PREFIX: ${{ github.workspace }}/prefix
     steps:
       - uses: actions/checkout@v4
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zlib1g-dev liblzma-dev liblzo2-dev
+      - if: runner.os == 'macOS'
+        run: brew install xz lzo pkgconf
       - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=${{ matrix.shared }} -DCMAKE_INSTALL_PREFIX="$PREFIX"
       - run: cmake --build build --config Release
       - run: cmake --install build --config Release
       - run: cmake -S tests/consumer -B build-consumer -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$PREFIX"
       - run: cmake --build build-consumer --config Release
       - if: runner.os != 'Windows'
-        run: ./build-consumer/consumer
-      - if: runner.os == 'macOS'
-        run: command -v pkg-config || brew install pkgconf
+        run: ./build-consumer/consumer tests/data/ubi.img
+      - if: runner.os == 'Windows'
+        run: PATH="$PREFIX/bin:$PATH" ./build-consumer/Release/consumer.exe tests/data/ubi.img
       - if: runner.os != 'Windows'
         run: |
           export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PREFIX/lib64/pkgconfig"
-          cc examples/basic.c $(pkg-config --cflags --libs flashfs) -Wl,-rpath,"$PREFIX/lib" -o basic-pc
-          ./basic-pc
+          static=$([ "${{ matrix.shared }}" = OFF ] && echo --static || true)
+          cc examples/mtdf-ls.c $(pkg-config $static --cflags --libs flashfs) -Wl,-rpath,"$PREFIX/lib" -o ls-pc
+          ./ls-pc tests/data/small-cramfs-le.img
 
   sanitizers:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y zlib1g-dev liblzma-dev liblzo2-dev mtd-utils fakeroot util-linux-extra linux-modules-extra-$(uname -r)
       - run: cmake --preset dev
       - run: cmake --build build/dev
       - run: ctest --preset dev
+      - run: ctest --test-dir build/dev -N | grep -q roundtrip
+      - run: sudo python3 tests/kernel/oracle.py build/dev/roundtrip_dump build/dev/roundtrip
+        env:
+          ASAN_OPTIONS: detect_leaks=0
 
   msvc:
     runs-on: windows-latest
@@ -50,11 +60,42 @@ jobs:
       - run: cmake --build build/msvc --config Debug
       - run: ctest --test-dir build/msvc -C Debug --output-on-failure
 
+  i386:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib zlib1g-dev:i386 liblzma-dev:i386 liblzo2-dev:i386
+      - run: >
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DFLASHFS_BUILD_TESTS=ON
+          -DCMAKE_C_FLAGS="-m32 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all"
+          -DCMAKE_LIBRARY_ARCHITECTURE=i386-linux-gnu
+      - run: cmake --build build
+      - run: file build/test_flashfs | grep -q "ELF 32-bit"
+      - run: ctest --test-dir build --output-on-failure
+
+  s390x:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: s390x
+      - run: >
+          docker run --rm --platform linux/s390x -v "$PWD":/src -w /src ubuntu:24.04 sh -ec '
+          apt-get update && apt-get install -y cmake gcc file zlib1g-dev liblzma-dev liblzo2-dev;
+          cmake -S . -B /tmp/b -DCMAKE_BUILD_TYPE=Debug -DFLASHFS_BUILD_TESTS=ON -DCMAKE_C_FLAGS="-Wall -Wextra -Werror";
+          cmake --build /tmp/b;
+          file /tmp/b/test_flashfs | grep -q MSB;
+          ctest --test-dir /tmp/b --output-on-failure'
+
   abi:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y abigail-tools
+      - run: sudo apt-get update && sudo apt-get install -y abigail-tools zlib1g-dev liblzma-dev liblzo2-dev
       - run: cmake --preset abi
       - run: cmake --build build/abi
       - run: scripts/symbols.sh build/abi/libflashfs.so include/flashfs/flashfs.h
@@ -64,14 +105,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y zlib1g-dev liblzma-dev liblzo2-dev
       - run: scripts/amalgamate.sh
-      - run: cc -std=c99 -Wall -Wextra -Wpedantic -Werror -Idist tests/single_file.c -o single && ./single
-      - run: cc -std=c99 -Wall -Wextra -Wpedantic -Werror -DMTDF_STATIC -Idist tests/single_file.c -o single-static && ./single-static
+      - run: |
+          for static in "" -DMTDF_STATIC; do
+            cc -std=c99 -Wall -Wextra -Wpedantic -Werror $static -DMTDF_HAVE_ZLIB -DMTDF_HAVE_LZMA -DMTDF_HAVE_LZO \
+               -Idist tests/single_file.c -lz -llzma -llzo2 -o single
+            for image in small-jffs2-le-zlib small-jffs2-be-lzma small-cramfs-be ubi; do ./single tests/data/$image.img; done
+          done
+          cc -std=c99 -Wall -Wextra -Wpedantic -Werror -Idist tests/single_file.c -o single-bare
+          ./single-bare tests/data/ubi.img
 
   fuzz:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev liblzma-dev liblzo2-dev
       - run: cmake --preset fuzz
       - run: cmake --build build/fuzz
-      - run: ./build/fuzz/fuzz_split -max_total_time=60
+      - run: |
+          for f in jffs2 cramfs ubi; do
+            rm -rf corpus && mkdir corpus && cp tests/data/*.img corpus/
+            ./build/fuzz/fuzz_$f -max_total_time=60 -max_len=1048576 corpus
+          done
