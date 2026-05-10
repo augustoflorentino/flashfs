@@ -74,7 +74,7 @@ static int entry(mtdf_fs_t *fs, const char *path, size_t path_len, mtdf_ino_t in
     fputs(" ", stdout);
     if (st.type == MTDF_TYPE_LINK)
         status = mtdf_readlink(fs, ino, target, sizeof(target), &len);
-    put_hex(target, len);
+    put_hex(target, status == MTDF_OK ? len : 0);
     fputs("\n", stdout);
     return status;
 }

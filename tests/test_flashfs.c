@@ -545,6 +545,38 @@ static void test_jffs2_log(void)
     buf_free(&b);
 }
 
+static void test_readlink_damaged(void)
+{
+    static const char garbage[] = "not a zlib stream";
+    char target[64];
+    mtdf_fs_t *fs;
+    mtdf_ino_t ino;
+    jb_inode_t in;
+    buf_t b = {0};
+    size_t got = 99;
+
+    jb_cleanmarker(&b, 0);
+    jb_dirent(&b, 0, 1, 2, 1, "link", JB_DT_LNK);
+    memset(&in, 0, sizeof(in));
+    in.ino = 2;
+    in.version = 1;
+    in.mode = 0120777;
+    in.isize = 40;
+    in.dsize = 40;
+    in.compr = 6;
+    in.payload = garbage;
+    in.payload_len = sizeof(garbage) - 1;
+    jb_inode(&b, 0, &in);
+    CHECK_EQ(mtdf_open_mem(b.data, b.len, NULL, &fs), MTDF_OK);
+    CHECK_EQ(mtdf_lookup(fs, "/link", 0, &ino), MTDF_OK);
+    memset(target, 'X', sizeof(target));
+    CHECK(mtdf_readlink(fs, ino, target, sizeof(target), &got) != MTDF_OK);
+    CHECK_EQ(got, 0);
+    CHECK_EQ(target[0], '\0');
+    mtdf_close(fs);
+    buf_free(&b);
+}
+
 static void test_with_codecs(void)
 {
     test_fixed_images();
@@ -556,6 +588,7 @@ static void test_with_codecs(void)
     test_read_and_readlink();
     test_budget();
     test_jffs2_log();
+    test_readlink_damaged();
 }
 
 static void test_without_codecs(void)
