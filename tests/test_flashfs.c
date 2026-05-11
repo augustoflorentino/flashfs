@@ -213,34 +213,91 @@ static int source_read(void *ctx, uint64_t offset, void *buf, size_t len)
     return 0;
 }
 
+static void *filled_alloc(void *ctx, size_t size)
+{
+    void *p = malloc(size);
+
+    if (p != NULL)
+        memset(p, *(const int *)ctx, size);
+    return p;
+}
+
+static void filled_free(void *ctx, void *ptr)
+{
+    (void)ctx;
+    free(ptr);
+}
+
+static uint64_t hash_tree(mtdf_fs_t *fs, mtdf_ino_t dir, uint64_t h)
+{
+    static unsigned char scratch[65536];
+    mtdf_dirent_t e;
+    mtdf_stat_t st;
+    uint64_t cookie = 0;
+    uint64_t off;
+    size_t got = 0;
+    size_t i;
+    int status;
+
+    while ((status = mtdf_readdir(fs, dir, &cookie, &e)) == MTDF_OK && mtdf_stat(fs, e.ino, &st) == MTDF_OK) {
+        for (i = 0; i < e.name_len; i++)
+            h = (h ^ (unsigned char)e.name[i]) * 0x100000001b3ull;
+        if (st.type == MTDF_TYPE_DIR)
+            h = hash_tree(fs, e.ino, h);
+        if (st.type == MTDF_TYPE_LINK) {
+            status = mtdf_readlink(fs, e.ino, (char *)scratch, sizeof(scratch), &got);
+            h = (h ^ (uint64_t)status) * 0x100000001b3ull;
+            for (i = 0; status == MTDF_OK && i < got; i++)
+                h = (h ^ scratch[i]) * 0x100000001b3ull;
+        }
+        for (off = 0; st.type == MTDF_TYPE_FILE && off < st.size; off += got) {
+            status = mtdf_read(fs, e.ino, off, scratch, sizeof(scratch), &got);
+            h = (h ^ (uint64_t)status) * 0x100000001b3ull;
+            for (i = 0; status == MTDF_OK && i < got; i++)
+                h = (h ^ scratch[i]) * 0x100000001b3ull;
+            if (status != MTDF_OK || got == 0)
+                break;
+        }
+    }
+    return (h ^ (uint64_t)status) * 0x100000001b3ull;
+}
+
 static void test_regressions(void)
 {
-    static const char *names[] = {"regress-cramfs-empty-span.img"};
-    static unsigned char scratch[65536];
+    static const char *names[] = {"regress-cramfs-empty-span.img", "regress-cramfs-shared-ref.img"};
+    static const int fills[] = {0x00, 0xa5};
+    mtdf_options_t opts;
     mtdf_fs_t *fs;
     source_t src;
     buf_t b = {0};
-    uint64_t bytes[2];
-    int status[2];
+    uint64_t first;
+    uint64_t h;
     size_t i;
-    int cb;
+    int run;
+    int status;
 
     for (i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
         if (buf_load(&b, data_dir, names[i]) != 0)
             continue;
-        for (cb = 0; cb < 2; cb++) {
+        for (run = 0, first = 0; run < 4; run++) {
+            memset(&opts, 0, sizeof(opts));
+            opts.alloc_fn = filled_alloc;
+            opts.free_fn = filled_free;
+            opts.alloc_ctx = (void *)&fills[run / 2];
             memset(&src, 0, sizeof(src));
             src.image = &b;
             src.fail_at = -1;
-            bytes[cb] = 0;
-            status[cb] = cb ? mtdf_open_cb(source_read, &src, b.len, NULL, &fs) : mtdf_open_mem(b.data, b.len, NULL, &fs);
-            if (status[cb] != MTDF_OK)
-                continue;
-            status[cb] = walk_all(fs, MTDF_ROOT, scratch, sizeof(scratch), UINT64_MAX, &bytes[cb]);
-            mtdf_close(fs);
+            status = run % 2 ? mtdf_open_cb(source_read, &src, b.len, &opts, &fs)
+                             : mtdf_open_mem(b.data, b.len, &opts, &fs);
+            h = 0xcbf29ce484222325ull ^ (uint64_t)status;
+            if (status == MTDF_OK) {
+                h = hash_tree(fs, MTDF_ROOT, h);
+                mtdf_close(fs);
+            }
+            if (run == 0)
+                first = h;
+            CHECK(h == first);
         }
-        CHECK_EQ(status[1], status[0]);
-        CHECK_EQ(bytes[1], bytes[0]);
     }
     buf_free(&b);
 }

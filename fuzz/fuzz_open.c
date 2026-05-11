@@ -27,6 +27,21 @@ static void mix_status(uint64_t *h, int status)
     mix(h, &status, sizeof(status));
 }
 
+static void *filled_alloc(void *ctx, size_t size)
+{
+    void *p = malloc(size);
+
+    if (p != NULL)
+        memset(p, *(const int *)ctx, size);
+    return p;
+}
+
+static void filled_free(void *ctx, void *ptr)
+{
+    (void)ctx;
+    free(ptr);
+}
+
 static int read_input(void *ctx, uint64_t offset, void *buf, size_t len)
 {
     const input_t *in = ctx;
@@ -84,6 +99,7 @@ static void walk(mtdf_fs_t *fs, mtdf_ino_t dir, unsigned depth, uint64_t *h)
 
 static uint64_t read_all(input_t *in, int callback)
 {
+    static const int fills[] = {0x00, 0xa5};
     mtdf_options_t opts;
     mtdf_report_t report;
     mtdf_fs_t *fs;
@@ -93,6 +109,9 @@ static uint64_t read_all(input_t *in, int callback)
     memset(&opts, 0, sizeof(opts));
     opts.format = FUZZ_FORMAT;
     opts.max_total_bytes = 64u << 20;
+    opts.alloc_fn = filled_alloc;
+    opts.free_fn = filled_free;
+    opts.alloc_ctx = (void *)&fills[callback];
     status = callback ? mtdf_open_cb(read_input, in, in->size, &opts, &fs)
                       : mtdf_open_mem(in->data, in->size, &opts, &fs);
     mix_status(&h, status);

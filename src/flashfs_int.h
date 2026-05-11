@@ -95,6 +95,7 @@ struct mtdf_fs {
 
     uint8_t *unit;
     uint64_t unit_key;
+    uint64_t unit_key2;
     size_t unit_len;
     int unit_valid;
 

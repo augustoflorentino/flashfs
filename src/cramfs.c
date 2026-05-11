@@ -319,7 +319,7 @@ static int mtdf_c_page(mtdf_fs_t *fs, mtdf_cramfs_t *c, const mtdf_entry_t *entr
     int raw;
     int status;
 
-    if (fs->unit_valid && fs->unit_key == key) {
+    if (fs->unit_valid && fs->unit_key == key && fs->unit_key2 == entry->size) {
         *out = fs->unit;
         return MTDF_OK;
     }
@@ -350,6 +350,7 @@ static int mtdf_c_page(mtdf_fs_t *fs, mtdf_cramfs_t *c, const mtdf_entry_t *entr
         return status;
     fs->unit_valid = 1;
     fs->unit_key = key;
+    fs->unit_key2 = entry->size;
     *out = fs->unit;
     return MTDF_OK;
 }
