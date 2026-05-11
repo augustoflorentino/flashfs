@@ -37,8 +37,12 @@ int mtdf_src_get(mtdf_fs_t *fs, uint64_t offset, size_t len, uint8_t *scratch, c
     if (offset > fs->len || len > fs->len - offset)
         return mtdf_fail(fs, MTDF_ERR_CORRUPT, "span %llu+%zu outside the %llu-byte image",
                          (unsigned long long)offset, len, (unsigned long long)fs->len);
-    if (fs->mem != NULL || len == 0) {
+    if (fs->mem != NULL) {
         *out = fs->mem + offset;
+        return MTDF_OK;
+    }
+    if (len == 0) {
+        *out = fs->window;
         return MTDF_OK;
     }
     if (len <= MTDF_SMALL || scratch == NULL)

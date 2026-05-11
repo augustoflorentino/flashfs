@@ -213,6 +213,38 @@ static int source_read(void *ctx, uint64_t offset, void *buf, size_t len)
     return 0;
 }
 
+static void test_regressions(void)
+{
+    static const char *names[] = {"regress-cramfs-empty-span.img"};
+    static unsigned char scratch[65536];
+    mtdf_fs_t *fs;
+    source_t src;
+    buf_t b = {0};
+    uint64_t bytes[2];
+    int status[2];
+    size_t i;
+    int cb;
+
+    for (i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+        if (buf_load(&b, data_dir, names[i]) != 0)
+            continue;
+        for (cb = 0; cb < 2; cb++) {
+            memset(&src, 0, sizeof(src));
+            src.image = &b;
+            src.fail_at = -1;
+            bytes[cb] = 0;
+            status[cb] = cb ? mtdf_open_cb(source_read, &src, b.len, NULL, &fs) : mtdf_open_mem(b.data, b.len, NULL, &fs);
+            if (status[cb] != MTDF_OK)
+                continue;
+            status[cb] = walk_all(fs, MTDF_ROOT, scratch, sizeof(scratch), UINT64_MAX, &bytes[cb]);
+            mtdf_close(fs);
+        }
+        CHECK_EQ(status[1], status[0]);
+        CHECK_EQ(bytes[1], bytes[0]);
+    }
+    buf_free(&b);
+}
+
 static void test_open_cb(void)
 {
     static const char *names[] = {"jffs2-le-zlib.img", "cramfs-be.img", "ubi.img"};
@@ -636,6 +668,7 @@ int main(int argc, char **argv)
     test_strings();
     test_open_arguments();
     test_without_codecs();
+    test_regressions();
     if ((mtdf_features() & (MTDF_FEATURE_ZLIB | MTDF_FEATURE_LZMA)) == (MTDF_FEATURE_ZLIB | MTDF_FEATURE_LZMA))
         test_with_codecs();
     else

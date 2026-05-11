@@ -24,6 +24,18 @@
       }
     },
     {
+      "name": "ubsan-clang",
+      "binaryDir": "${sourceDir}/build/ubsan-clang",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "BUILD_SHARED_LIBS": "ON",
+        "FLASHFS_BUILD_TESTS": "ON",
+        "FLASHFS_BUILD_EXAMPLES": "ON",
+        "CMAKE_C_FLAGS": "-g -Wall -Wextra -Werror -fsanitize=undefined,integer,nullability,implicit-conversion -fno-sanitize=unsigned-integer-overflow,implicit-integer-sign-change,implicit-unsigned-integer-truncation,unsigned-shift-base -fno-sanitize-recover=all -fno-omit-frame-pointer",
+        "CMAKE_C_COMPILER": "clang"
+      }
+    },
+    {
       "name": "msvc",
       "binaryDir": "${sourceDir}/build/msvc",
       "cacheVariables": {
@@ -74,6 +86,13 @@
     {
       "name": "ubsan",
       "configurePreset": "ubsan",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "ubsan-clang",
+      "configurePreset": "ubsan-clang",
       "output": {
         "outputOnFailure": true
       }

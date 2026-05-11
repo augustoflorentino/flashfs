@@ -52,6 +52,15 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=0
 
+  ubsan-clang:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev liblzma-dev liblzo2-dev
+      - run: cmake --preset ubsan-clang
+      - run: cmake --build build/ubsan-clang
+      - run: ctest --preset ubsan-clang
+
   msvc:
     runs-on: windows-latest
     steps:
