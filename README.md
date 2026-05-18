@@ -80,7 +80,19 @@ Conventions:
 
 ## Performance
 
-PERF
+Measured by `bench/run.sh` on one machine (2026-05-17), release build, images in memory, median
+of 7 runs; the Python column is fwtriage's reader, which flashfs was extracted from, on the same
+images.
+
+| image | open + list | read everything | heap peak while listing | Python, probe + unpack |
+|---|---|---|---|---|
+| JFFS2, 16 MiB, zlib, 1770 entries | 7.4 ms | 79 ms (318 MB/s) | 5.7% of the image | 178 ms |
+| cramfs, 14.5 MB, 1770 entries | 5.7 ms | 82 ms (305 MB/s) | 1.7% | 114 ms |
+| UBI, 128 MiB, one volume | 0.18 ms | 5 ms | 0.12% | 260 ms |
+| fwtriage's test corpus, 874 images | | 10.6 ms in all | | 187 ms in all |
+
+Opening builds an index and decodes nothing; reading a zlib image is bound by zlib itself:
+inflating the JFFS2 image's 6247 zlib nodes alone takes 86 ms (`bench/zlib_floor.py`).
 
 ## Versioning
 
