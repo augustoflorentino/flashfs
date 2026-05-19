@@ -81,8 +81,8 @@ Conventions:
 ## Performance
 
 Measured by `bench/run.sh` on one machine (2026-05-17), release build, images in memory, median
-of 7 runs; the Python column is fwtriage's reader, which flashfs was extracted from, on the same
-images.
+of 7 runs (3 for Python; the corpus is one pass). The Python column is fwtriage's reader, which
+flashfs was extracted from, on the same images.
 
 | image | open + list | read everything | heap peak while listing | Python, probe + unpack |
 |---|---|---|---|---|
