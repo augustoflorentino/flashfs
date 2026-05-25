@@ -145,6 +145,11 @@ static inline uint32_t mtdf_be32(const uint8_t *p)
     return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | (uint32_t)p[3];
 }
 
+static inline uint64_t mtdf_le64(const uint8_t *p)
+{
+    return (uint64_t)mtdf_le32(p + 4) << 32 | mtdf_le32(p);
+}
+
 static inline uint64_t mtdf_be64(const uint8_t *p)
 {
     return (uint64_t)mtdf_be32(p) << 32 | mtdf_be32(p + 4);
