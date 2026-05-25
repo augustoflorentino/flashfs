@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "Please cite flashfs as below if it was useful to your work."
+type: software
+title: flashfs
+abstract: "C99 library that reads JFFS2, cramfs, UBI and UBIFS images without mounting, built for untrusted firmware"
+authors:
+  - family-names: Florentino
+    given-names: Augusto
+license: MIT
+repository-code: "https://github.com/augustoflorentino/flashfs"
+keywords:
+  - c
+  - c99
+  - library
+  - jffs2
+  - ubifs
+  - cramfs
+  - ubi
+  - firmware
