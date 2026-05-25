@@ -101,6 +101,7 @@ struct mtdf_fs {
 
     void *zlib;
     void *lzma;
+    void *zstd;
 
     mtdf_info_t info;
     mtdf_report_t report;
@@ -166,6 +167,8 @@ static inline size_t mtdf_strnlen(const char *s, size_t max)
     return nul == NULL ? max : (size_t)(nul - s);
 }
 
+typedef int (*mtdf_cmp_fn)(const void *ctx, const void *a, const void *b);
+MTDF_INTERN void mtdf_sort(void *items, void *tmp, size_t count, size_t size, mtdf_cmp_fn cmp, const void *ctx);
 MTDF_INTERN int mtdf_tree_init(mtdf_fs_t *fs);
 MTDF_INTERN int mtdf_tree_add(mtdf_fs_t *fs, const char *name, size_t name_len, uint32_t *out_index);
 MTDF_INTERN int mtdf_tree_finish(mtdf_fs_t *fs);
@@ -185,11 +188,13 @@ static inline uint32_t mtdf_entry_count(const mtdf_fs_t *fs)
 MTDF_INTERN int mtdf_inflate(mtdf_fs_t *fs, const uint8_t *in, size_t in_len, uint8_t *out, size_t out_len, int raw);
 MTDF_INTERN int mtdf_unlzma_jffs2(mtdf_fs_t *fs, const uint8_t *in, size_t in_len, uint8_t *out, size_t out_len);
 MTDF_INTERN int mtdf_unlzo(mtdf_fs_t *fs, const uint8_t *in, size_t in_len, uint8_t *out, size_t out_len);
+MTDF_INTERN int mtdf_unzstd(mtdf_fs_t *fs, const uint8_t *in, size_t in_len, uint8_t *out, size_t out_len);
 MTDF_INTERN int mtdf_unrtime(mtdf_fs_t *fs, const uint8_t *in, size_t in_len, uint8_t *out, size_t out_len);
 MTDF_INTERN void mtdf_decoders_free(mtdf_fs_t *fs);
 
 MTDF_INTERN int mtdf_jffs2_open(mtdf_fs_t *fs, int forced);
 MTDF_INTERN int mtdf_cramfs_open(mtdf_fs_t *fs, int forced);
 MTDF_INTERN int mtdf_ubi_open(mtdf_fs_t *fs, int forced);
+MTDF_INTERN int mtdf_ubifs_open(mtdf_fs_t *fs, int forced);
 
 #endif

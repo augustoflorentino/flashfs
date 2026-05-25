@@ -9,8 +9,12 @@
 #ifdef MTDF_HAVE_LZO
 #include <lzo/lzo1x.h>
 #endif
+#ifdef MTDF_HAVE_ZSTD
+#define ZSTD_STATIC_LINKING_ONLY
+#include <zstd.h>
+#endif
 
-#if !defined(MTDF_HAVE_ZLIB) || !defined(MTDF_HAVE_LZMA) || !defined(MTDF_HAVE_LZO)
+#if !defined(MTDF_HAVE_ZLIB) || !defined(MTDF_HAVE_LZMA) || !defined(MTDF_HAVE_LZO) || !defined(MTDF_HAVE_ZSTD)
 static int mtdf_missing(mtdf_fs_t *fs, const char *library, const char *what)
 {
     return mtdf_fail(fs, MTDF_ERR_UNSUPPORTED, "%s needs %s, which this build does not include", what, library);
@@ -185,6 +189,50 @@ int mtdf_unlzo(mtdf_fs_t *fs, const uint8_t *in, size_t in_len, uint8_t *out, si
 #endif
 }
 
+#ifdef MTDF_HAVE_ZSTD
+static void *mtdf_zstd_alloc(void *opaque, size_t size)
+{
+    return mtdf_alloc((mtdf_fs_t *)opaque, size);
+}
+
+static void mtdf_zstd_free(void *opaque, void *ptr)
+{
+    mtdf_free((mtdf_fs_t *)opaque, ptr);
+}
+#endif
+
+int mtdf_unzstd(mtdf_fs_t *fs, const uint8_t *in, size_t in_len, uint8_t *out, size_t out_len)
+{
+#ifdef MTDF_HAVE_ZSTD
+    ZSTD_customMem mem;
+    size_t produced;
+
+    if (fs->zstd == NULL) {
+        mem.customAlloc = mtdf_zstd_alloc;
+        mem.customFree = mtdf_zstd_free;
+        mem.opaque = fs;
+        fs->zstd = ZSTD_createDCtx_advanced(mem);
+        if (fs->zstd == NULL)
+            return MTDF_ERR_NOMEM;
+    }
+    produced = ZSTD_decompressDCtx(fs->zstd, out, out_len, in, in_len);
+    if (ZSTD_isError(produced)) {
+        if (ZSTD_getErrorCode(produced) == ZSTD_error_memory_allocation)
+            return MTDF_ERR_NOMEM;
+        return mtdf_fail(fs, MTDF_ERR_CORRUPT, "zstd: %s", ZSTD_getErrorName(produced));
+    }
+    if (produced != out_len)
+        return mtdf_fail(fs, MTDF_ERR_CORRUPT, "zstd block decodes to %zu bytes, expected %zu", produced, out_len);
+    return MTDF_OK;
+#else
+    (void)in;
+    (void)in_len;
+    (void)out;
+    (void)out_len;
+    return mtdf_missing(fs, "libzstd", "zstd compression");
+#endif
+}
+
 int mtdf_unrtime(mtdf_fs_t *fs, const uint8_t *in, size_t in_len, uint8_t *out, size_t out_len)
 {
     size_t positions[256];
@@ -226,6 +274,10 @@ void mtdf_decoders_free(mtdf_fs_t *fs)
         mtdf_free(fs, fs->lzma);
     }
 #endif
+#ifdef MTDF_HAVE_ZSTD
+    ZSTD_freeDCtx(fs->zstd);
+#endif
     fs->zlib = NULL;
     fs->lzma = NULL;
+    fs->zstd = NULL;
 }

@@ -81,8 +81,11 @@ typedef struct mtdf_sort_key {
     uint32_t index;
 } mtdf_sort_key_t;
 
-static int mtdf_by_parent_name(const mtdf_fs_t *fs, const mtdf_sort_key_t *a, const mtdf_sort_key_t *b)
+static int mtdf_by_parent_name(const void *ctx, const void *pa, const void *pb)
 {
+    const mtdf_fs_t *fs = ctx;
+    const mtdf_sort_key_t *a = pa;
+    const mtdf_sort_key_t *b = pb;
     const mtdf_entry_t *ea = mtdf_entry((mtdf_fs_t *)fs, a->index);
     const mtdf_entry_t *eb = mtdf_entry((mtdf_fs_t *)fs, b->index);
     size_t common = ea->name_len < eb->name_len ? ea->name_len : eb->name_len;
@@ -98,8 +101,10 @@ static int mtdf_by_parent_name(const mtdf_fs_t *fs, const mtdf_sort_key_t *a, co
     return a->index < b->index ? -1 : a->index > b->index;
 }
 
-static void mtdf_sort_keys(const mtdf_fs_t *fs, mtdf_sort_key_t *keys, mtdf_sort_key_t *tmp, size_t count)
+void mtdf_sort(void *items, void *tmp, size_t count, size_t size, mtdf_cmp_fn cmp, const void *ctx)
 {
+    uint8_t *a = items;
+    uint8_t *t = tmp;
     size_t width;
     size_t lo;
     size_t mid;
@@ -113,13 +118,13 @@ static void mtdf_sort_keys(const mtdf_fs_t *fs, mtdf_sort_key_t *keys, mtdf_sort
             mid = lo + width < count ? lo + width : count;
             hi = lo + 2 * width < count ? lo + 2 * width : count;
             for (i = lo, j = mid, k = lo; k < hi; k++) {
-                if (i < mid && (j >= hi || mtdf_by_parent_name(fs, &keys[i], &keys[j]) <= 0))
-                    tmp[k] = keys[i++];
+                if (i < mid && (j >= hi || cmp(ctx, a + i * size, a + j * size) <= 0))
+                    memcpy(t + k * size, a + i++ * size, size);
                 else
-                    tmp[k] = keys[j++];
+                    memcpy(t + k * size, a + j++ * size, size);
             }
         }
-        memcpy(keys, tmp, count * sizeof(*keys));
+        memcpy(a, t, count * size);
     }
 }
 
@@ -199,7 +204,7 @@ int mtdf_tree_finish(mtdf_fs_t *fs)
             keys[i].index = (uint32_t)(i + 1);
             keys[i].parent = mtdf_entry(fs, (uint32_t)(i + 1))->parent;
         }
-        mtdf_sort_keys(fs, keys, keys + fs->entries.len, count);
+        mtdf_sort(keys, keys + fs->entries.len, count, sizeof(*keys), mtdf_by_parent_name, fs);
         for (i = 0; i < fs->entries.len; i++)
             mtdf_entry(fs, (uint32_t)i)->nlink = (mtdf_entry(fs, (uint32_t)i)->mode & MTDF_S_IFMT) == MTDF_S_IFDIR
                                                      ? 2
