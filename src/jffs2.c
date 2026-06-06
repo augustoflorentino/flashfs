@@ -396,19 +396,9 @@ static int mtdf_j_find_start(mtdf_fs_t *fs, int forced, uint64_t *out_start, int
     return MTDF_OK;
 }
 
-typedef int (*mtdf_cmp_fn)(const void *ctx, const void *a, const void *b);
-
 static int mtdf_j_sort(mtdf_fs_t *fs, void *base, size_t count, size_t size, mtdf_cmp_fn cmp, const void *ctx)
 {
-    uint8_t *a = base;
-    uint8_t *tmp;
-    size_t width;
-    size_t lo;
-    size_t mid;
-    size_t hi;
-    size_t i;
-    size_t k;
-    size_t m;
+    void *tmp;
 
     if (count < 2)
         return MTDF_OK;
@@ -417,19 +407,7 @@ static int mtdf_j_sort(mtdf_fs_t *fs, void *base, size_t count, size_t size, mtd
     tmp = mtdf_alloc(fs, count * size);
     if (tmp == NULL)
         return MTDF_ERR_NOMEM;
-    for (width = 1; width < count; width *= 2) {
-        for (lo = 0; lo < count; lo += 2 * width) {
-            mid = lo + width < count ? lo + width : count;
-            hi = lo + 2 * width < count ? lo + 2 * width : count;
-            for (i = lo, m = mid, k = lo; k < hi; k++) {
-                if (i < mid && (m >= hi || cmp(ctx, a + i * size, a + m * size) <= 0))
-                    memcpy(tmp + k * size, a + (i++) * size, size);
-                else
-                    memcpy(tmp + k * size, a + (m++) * size, size);
-            }
-        }
-        memcpy(a, tmp, count * size);
-    }
+    mtdf_sort(base, tmp, count, size, cmp, ctx);
     mtdf_free(fs, tmp);
     return MTDF_OK;
 }
