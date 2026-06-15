@@ -2,7 +2,15 @@ name: ci
 
 on:
   push:
+    branches: [main]
+    paths-ignore: ['**.md']
   pull_request:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   install:
@@ -18,7 +26,7 @@ jobs:
     env:
       PREFIX: ${{ github.workspace }}/prefix
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y zlib1g-dev liblzma-dev liblzo2-dev libzstd-dev
       - if: runner.os == 'macOS'
@@ -42,7 +50,7 @@ jobs:
   sanitizers:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
       - run: sudo apt-get update && sudo apt-get install -y zlib1g-dev liblzma-dev liblzo2-dev libzstd-dev mtd-utils fakeroot util-linux-extra linux-modules-extra-$(uname -r)
       - run: cmake --preset dev
       - run: cmake --build build/dev
@@ -55,7 +63,7 @@ jobs:
   ubsan-clang:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
       - run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev liblzma-dev liblzo2-dev libzstd-dev
       - run: cmake --preset ubsan-clang
       - run: cmake --build build/ubsan-clang
@@ -64,7 +72,7 @@ jobs:
   msvc:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
       - run: cmake --preset msvc
       - run: cmake --build build/msvc --config Debug
       - run: ctest --test-dir build/msvc -C Debug --output-on-failure
@@ -72,7 +80,7 @@ jobs:
   i386:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
       - run: |
           sudo dpkg --add-architecture i386
           sudo apt-get update
@@ -88,8 +96,8 @@ jobs:
   s390x:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
         with:
           platforms: s390x
       - run: >
@@ -103,7 +111,7 @@ jobs:
   abi:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
       - run: sudo apt-get update && sudo apt-get install -y abigail-tools zlib1g-dev liblzma-dev liblzo2-dev libzstd-dev
       - run: cmake --preset abi
       - run: cmake --build build/abi
@@ -113,7 +121,7 @@ jobs:
   single-file:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
       - run: sudo apt-get update && sudo apt-get install -y zlib1g-dev liblzma-dev liblzo2-dev libzstd-dev
       - run: scripts/amalgamate.sh
       - run: |
@@ -129,7 +137,7 @@ jobs:
   fuzz:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
       - run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev liblzma-dev liblzo2-dev libzstd-dev
       - run: cmake --preset fuzz
       - run: cmake --build build/fuzz
