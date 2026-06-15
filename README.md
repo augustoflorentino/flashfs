@@ -1,7 +1,7 @@
 # flashfs
 
-Read-only reader for embedded flash filesystems: JFFS2, cramfs and UBI, in C99, without mounting
-and without root.
+Read-only reader for embedded flash filesystems: JFFS2, cramfs, UBI and UBIFS, in C99, without
+mounting and without root.
 
 Images come from firmware someone else built, so the library treats them as hostile: every size,
 offset and count is checked against the bytes present and against a budget before it is used, and
@@ -15,9 +15,9 @@ cmake --build build
 cmake --install build --prefix /usr/local
 ```
 
-zlib, liblzma and liblzo2 are used when found (`FLASHFS_WITH_ZLIB`, `FLASHFS_WITH_LZMA`,
-`FLASHFS_WITH_LZO`). Without one, the files that need it read as `MTDF_ERR_UNSUPPORTED`;
-`mtdf_features()` says which decoders the build has.
+zlib, liblzma, liblzo2 and libzstd are used when found (`FLASHFS_WITH_ZLIB`, `FLASHFS_WITH_LZMA`,
+`FLASHFS_WITH_LZO`, `FLASHFS_WITH_ZSTD`). Without one, the files that need it read as
+`MTDF_ERR_UNSUPPORTED`; `mtdf_features()` says which decoders the build has.
 
 Use it from CMake:
 
@@ -43,7 +43,7 @@ one `.c` file:
 ```
 
 Define `MTDF_STATIC` as well to keep every function private to that file, and `MTDF_HAVE_ZLIB`,
-`MTDF_HAVE_LZMA`, `MTDF_HAVE_LZO` for each decoder you link.
+`MTDF_HAVE_LZMA`, `MTDF_HAVE_LZO`, `MTDF_HAVE_ZSTD` for each decoder you link.
 
 ## Usage
 
@@ -62,6 +62,27 @@ if (mtdf_lookup(fs, "/etc/passwd", MTDF_LOOKUP_FOLLOW, &ino) == MTDF_OK &&
     fwrite(buf, 1, got, stdout);
 mtdf_close(fs);
 ```
+
+A UBIFS usually lives in a UBI volume. flashfs shows each volume as a file, and the UBIFS in it opens
+through a callback that reads that file:
+
+```c
+static int volume_read(void *ctx, uint64_t offset, void *buf, size_t len)
+{
+    struct volume *v = ctx; /* the UBI handle and the volume's inode */
+    size_t got;
+
+    for (; len > 0; offset += got, len -= got, buf = (char *)buf + got)
+        if (mtdf_read(v->ubi, v->ino, offset, buf, len, &got) != MTDF_OK || got == 0)
+            return -1;
+    return 0;
+}
+
+/* ubi from mtdf_open_mem, v.ino from mtdf_lookup(ubi, "/rootfs", ...), size from mtdf_stat */
+mtdf_open_cb(volume_read, &v, st.size, NULL, &rootfs);
+```
+
+Close the UBIFS handle before the UBI one. A UBIFS image written by `mkfs.ubifs` opens directly.
 
 [`examples/mtdf-ls.c`](examples/mtdf-ls.c) lists an image read through a callback;
 [`examples/mtdf-extract.c`](examples/mtdf-extract.c) extracts it into a new directory without

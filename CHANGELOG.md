@@ -4,6 +4,23 @@ Each release lists what changed, what updating means for existing code, and ever
 
 ## Unreleased
 
+## 0.2.0 - 2026-06-15
+
+- Reads UBIFS (`MTDF_FORMAT_UBIFS`): the superblock, the newer master node, the committed index, and
+  the journal replayed over it (buds named by the log, newest node per key, deletions, renames and
+  truncations). Data nodes uncompressed, lzo, zlib or zstd; files of any of them can be read.
+  Authenticated images are refused and encrypted files read as `MTDF_ERR_UNSUPPORTED`; extended
+  attributes are skipped and counted.
+- A UBIFS in a UBI volume opens through `mtdf_open_cb` over the volume as flashfs shows it; the
+  README has the callback.
+- Optional zstd decoder (`FLASHFS_WITH_ZSTD`, `MTDF_HAVE_ZSTD` in the single-file form,
+  `MTDF_FEATURE_ZSTD`), through the library's allocator.
+- Detection tries UBI, then UBIFS, cramfs and JFFS2.
+
+Updating: no function changed. `MTDF_FORMAT_UBIFS` is a new accepted value of
+`mtdf_options_t.format`, and `mtdf_features` can return the new bit `MTDF_FEATURE_ZSTD`: code that
+rejected unknown values of either should accept them.
+
 ## 0.1.0 - 2026-05-19
 
 First release.
