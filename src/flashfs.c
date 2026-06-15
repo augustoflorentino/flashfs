@@ -104,7 +104,7 @@ static int mtdf_check_options(const mtdf_options_t *opts)
 
     if (opts == NULL)
         return MTDF_OK;
-    if ((opts->alloc_fn == NULL) != (opts->free_fn == NULL) || opts->format > MTDF_FORMAT_UBI ||
+    if ((opts->alloc_fn == NULL) != (opts->free_fn == NULL) || opts->format > MTDF_FORMAT_UBIFS ||
         opts->reserved_ptr != NULL)
         return MTDF_ERR_ARG;
     for (i = 0; i < sizeof(opts->reserved) / sizeof(opts->reserved[0]); i++) {
@@ -145,8 +145,8 @@ typedef int (*mtdf_open_fn)(mtdf_fs_t *fs, int forced);
 
 static int mtdf_detect(mtdf_fs_t *fs, uint32_t format)
 {
-    static const mtdf_open_fn opens[] = {mtdf_ubi_open, mtdf_cramfs_open, mtdf_jffs2_open};
-    static const uint32_t formats[] = {MTDF_FORMAT_UBI, MTDF_FORMAT_CRAMFS, MTDF_FORMAT_JFFS2};
+    static const mtdf_open_fn opens[] = {mtdf_ubi_open, mtdf_ubifs_open, mtdf_cramfs_open, mtdf_jffs2_open};
+    static const uint32_t formats[] = {MTDF_FORMAT_UBI, MTDF_FORMAT_UBIFS, MTDF_FORMAT_CRAMFS, MTDF_FORMAT_JFFS2};
     size_t i;
     int status;
 
@@ -361,6 +361,8 @@ const char *mtdf_format_name(uint32_t format)
         return "cramfs";
     case MTDF_FORMAT_UBI:
         return "ubi";
+    case MTDF_FORMAT_UBIFS:
+        return "ubifs";
     default:
         return "unknown";
     }
@@ -378,6 +380,9 @@ unsigned mtdf_features(void)
 #endif
 #ifdef MTDF_HAVE_LZO
     features |= MTDF_FEATURE_LZO;
+#endif
+#ifdef MTDF_HAVE_ZSTD
+    features |= MTDF_FEATURE_ZSTD;
 #endif
     return features;
 }

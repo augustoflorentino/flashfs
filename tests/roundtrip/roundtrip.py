@@ -1,11 +1,12 @@
-"""M2: round trip through the official tools.
+"""M2 and M6: round trip through the official tools.
 
 Builds a fixed tree (files from 0 B to 8 MiB, sparse files, links, devices,
 UTF-8 and 255-byte names, 10 000 files in one directory, 20 levels), packs it
 with mkfs.jffs2 (each compression, both byte orders, 3 erase sizes),
 mkfs.cramfs (both byte orders, with explicit holes and with the 512-byte
-pad) and ubinize, and checks that every file comes back from flashfs with the
-same content, mode, uid, gid, device number and link target.
+pad), mkfs.ubifs (each compression, 3 geometries, alone and inside a UBI
+volume) and ubinize, and checks that every file comes back from flashfs with
+the same content, mode, uid, gid, device number and link target.
 
 Runs under fakeroot so the tree can hold owners and devices:
 
@@ -119,6 +120,13 @@ def jffs2_extras(root):
     put(os.path.join(extra, LONG_NAME_JFFS2), b"255\n")
     put(os.path.join(extra, "wide-ids"), b"ids\n", 0o644, uid=65000, gid=60000)
 
+def ubifs_extras(root):
+    """What UBIFS holds and JFFS2 cannot: 12-bit majors, 20-bit minors, link targets of 4000 bytes."""
+    extra = os.path.join(root, "ubifs")
+    os.mkdir(extra)
+    os.mknod(os.path.join(extra, "wide-dev"), 0o600 | stat.S_IFBLK, os.makedev(259, 70000))
+    os.symlink("y" * 4000, os.path.join(extra, "longest-target"))
+
 def expected(root):
     """The listing dump prints, built from the tree on disk."""
     lines = []
@@ -145,12 +153,13 @@ def expected(root):
                           size, digest, target))
     return sorted(lines)
 
-def actual(dump, image):
+def actual(dump, image, volume=None):
     """The listing from memory; reading through the callback window must print the same."""
-    out = subprocess.run([dump, image], capture_output=True, check=False)
+    nested = ["-v", volume] if volume else []
+    out = subprocess.run([dump] + nested + [image], capture_output=True, check=False)
     if out.returncode != 0 or out.stderr:
         return None, out.stderr.decode(errors="replace").strip()
-    through_cb = subprocess.run([dump, "-c", image], capture_output=True, check=False)
+    through_cb = subprocess.run([dump, "-c"] + nested + [image], capture_output=True, check=False)
     if (through_cb.returncode, through_cb.stdout, through_cb.stderr) != (0, out.stdout, b""):
         return None, "open_cb differs from open_mem: " + through_cb.stderr.decode(errors="replace").strip()
     lines = []
@@ -193,6 +202,38 @@ def cramfs_images(tree, work):
         name = "cramfs%s.img" % "".join(flags).replace("-N", "-")
         out = os.path.join(work, name)
         subprocess.run(["mkfs.cramfs"] + flags + [tree, out], check=True, stdout=subprocess.DEVNULL)
+        yield name, out
+
+UBIFS_GEOMETRIES = {"nand2k": ["-m", "2048", "-e", "126976", "-c", "4096"],
+                    "nand4k": ["-m", "4096", "-e", "253952", "-c", "2048"],
+                    "nor": ["-m", "8", "-e", "65408", "-c", "8192"]}
+
+def ubifs_images(tree, work):
+    for compr in ("none", "lzo", "zlib", "zstd", "favor_lzo"):
+        for geometry, flags in UBIFS_GEOMETRIES.items():
+            name = "ubifs-%s-%s.img" % (compr, geometry)
+            out = os.path.join(work, name)
+            subprocess.run(["mkfs.ubifs", "-r", tree, "-o", out, "-x", compr] + flags, check=True)
+            yield name, out
+    variants = {"fanout3": ["-x", "zlib", "-f", "3"], "fanout64": ["-x", "lzo", "-f", "64"],
+                "keyhash-test": ["-x", "zstd", "-k", "test"], "fixup-log8": ["-x", "lzo", "-F", "-l", "8"]}
+    for variant, flags in variants.items():
+        name = "ubifs-%s.img" % variant
+        out = os.path.join(work, name)
+        subprocess.run(["mkfs.ubifs", "-r", tree, "-o", out] + flags + UBIFS_GEOMETRIES["nand2k"], check=True)
+        yield name, out
+
+def ubifs_in_ubi(work):
+    """The UBIFS image as UBI volume rootfs, in the geometry whose LEB it was made for."""
+    for image, flags in (("ubifs-lzo-nand2k.img", ["-p", "128KiB", "-m", "2048", "-s", "512"]),
+                         ("ubifs-zstd-nor.img", ["-p", "64KiB", "-m", "1"])):
+        ini = os.path.join(work, image + ".ini")
+        with open(ini, "w") as f:
+            f.write("[rootfs]\nmode=ubi\nimage=%s\nvol_id=0\nvol_type=dynamic\nvol_name=rootfs\n"
+                    "vol_flags=autoresize\n" % os.path.join(work, image))
+        name = "ubi-with-" + image
+        out = os.path.join(work, name)
+        subprocess.run(["ubinize", "-o", out] + flags + [ini], check=True, stderr=subprocess.DEVNULL)
         yield name, out
 
 def ubi_images(work, payloads):
@@ -245,15 +286,22 @@ def run(dump, work):
     want_full = [w if w[0] != "/links/long-target".encode().hex() else w[:5] + (1000, "-", w[7][:2 * 254])
                  for w in expected(full)]
     want_common = expected(common)
-    images = [(n, p, want_full) for n, p in jffs2_images(full, work)]
-    images += [(n, p, want_common) for n, p in cramfs_images(common, work)]
-    for name, path, want in images:
-        got, err = actual(dump, path)
+    ubifs = os.path.join(work, "tree-ubifs")
+    common_tree(ubifs)
+    jffs2_extras(ubifs)
+    ubifs_extras(ubifs)
+    want_ubifs = expected(ubifs)
+    images = [(n, p, want_full, None) for n, p in jffs2_images(full, work)]
+    images += [(n, p, want_common, None) for n, p in cramfs_images(common, work)]
+    images += [(n, p, want_ubifs, None) for n, p in ubifs_images(ubifs, work)]
+    images += [(n, p, want_ubifs, "rootfs") for n, p in ubifs_in_ubi(work)]
+    for name, path, want, volume in images:
+        got, err = actual(dump, path, volume)
         problems = [err] if got is None else compare(want, got)
         total += 1
         failed += bool(problems)
         files = sum(1 for w in want)
-        print("%-28s %6d entries  %s" % (name, files, "ok" if not problems else "FAIL"))
+        print("%-36s %6d entries  %s" % (name, files, "ok" if not problems else "FAIL"))
         for p in problems[:10]:
             print("  " + p)
 
@@ -264,7 +312,7 @@ def run(dump, work):
         problems = check_ubi(dump, path, payloads)
         total += 1
         failed += bool(problems)
-        print("%-28s %6d volumes  %s" % (name, len(payloads), "ok" if not problems else "FAIL"))
+        print("%-36s %6d volumes  %s" % (name, len(payloads), "ok" if not problems else "FAIL"))
         for p in problems:
             print("  " + p)
     print("roundtrip: %d images, %d failed" % (total, failed))

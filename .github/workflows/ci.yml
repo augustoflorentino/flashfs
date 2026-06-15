@@ -20,9 +20,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y zlib1g-dev liblzma-dev liblzo2-dev
+        run: sudo apt-get update && sudo apt-get install -y zlib1g-dev liblzma-dev liblzo2-dev libzstd-dev
       - if: runner.os == 'macOS'
-        run: brew install xz lzo pkgconf
+        run: brew install xz lzo zstd pkgconf
       - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=${{ matrix.shared }} -DCMAKE_INSTALL_PREFIX="$PREFIX"
       - run: cmake --build build --config Release
       - run: cmake --install build --config Release
@@ -43,7 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y zlib1g-dev liblzma-dev liblzo2-dev mtd-utils fakeroot util-linux-extra linux-modules-extra-$(uname -r)
+      - run: sudo apt-get update && sudo apt-get install -y zlib1g-dev liblzma-dev liblzo2-dev libzstd-dev mtd-utils fakeroot util-linux-extra linux-modules-extra-$(uname -r)
       - run: cmake --preset dev
       - run: cmake --build build/dev
       - run: ctest --preset dev
@@ -56,7 +56,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev liblzma-dev liblzo2-dev
+      - run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev liblzma-dev liblzo2-dev libzstd-dev
       - run: cmake --preset ubsan-clang
       - run: cmake --build build/ubsan-clang
       - run: ctest --preset ubsan-clang
@@ -76,7 +76,7 @@ jobs:
       - run: |
           sudo dpkg --add-architecture i386
           sudo apt-get update
-          sudo apt-get install -y gcc-multilib zlib1g-dev:i386 liblzma-dev:i386 liblzo2-dev:i386
+          sudo apt-get install -y gcc-multilib zlib1g-dev:i386 liblzma-dev:i386 liblzo2-dev:i386 libzstd-dev:i386
       - run: >
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DFLASHFS_BUILD_TESTS=ON
           -DCMAKE_C_FLAGS="-m32 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all"
@@ -94,7 +94,7 @@ jobs:
           platforms: s390x
       - run: >
           docker run --rm --platform linux/s390x -v "$PWD":/src -w /src ubuntu:24.04 sh -ec '
-          apt-get update && apt-get install -y cmake gcc file zlib1g-dev liblzma-dev liblzo2-dev;
+          apt-get update && apt-get install -y cmake gcc file zlib1g-dev liblzma-dev liblzo2-dev libzstd-dev;
           cmake -S . -B /tmp/b -DCMAKE_BUILD_TYPE=Debug -DFLASHFS_BUILD_TESTS=ON -DCMAKE_C_FLAGS="-Wall -Wextra -Werror";
           cmake --build /tmp/b;
           file /tmp/b/test_flashfs | grep -q MSB;
@@ -104,7 +104,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y abigail-tools zlib1g-dev liblzma-dev liblzo2-dev
+      - run: sudo apt-get update && sudo apt-get install -y abigail-tools zlib1g-dev liblzma-dev liblzo2-dev libzstd-dev
       - run: cmake --preset abi
       - run: cmake --build build/abi
       - run: scripts/symbols.sh build/abi/libflashfs.so include/flashfs/flashfs.h
@@ -114,26 +114,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y zlib1g-dev liblzma-dev liblzo2-dev
+      - run: sudo apt-get update && sudo apt-get install -y zlib1g-dev liblzma-dev liblzo2-dev libzstd-dev
       - run: scripts/amalgamate.sh
       - run: |
           for static in "" -DMTDF_STATIC; do
             cc -std=c99 -Wall -Wextra -Wpedantic -Werror $static -DMTDF_HAVE_ZLIB -DMTDF_HAVE_LZMA -DMTDF_HAVE_LZO \
-               -Idist tests/single_file.c -lz -llzma -llzo2 -o single
-            for image in small-jffs2-le-zlib small-jffs2-be-lzma small-cramfs-be ubi; do ./single tests/data/$image.img; done
+               -DMTDF_HAVE_ZSTD -Idist tests/single_file.c -lz -llzma -llzo2 -lzstd -o single
+            for image in small-jffs2-le-zlib small-jffs2-be-lzma small-cramfs-be ubi small-ubifs-zstd ubifs-journal; do ./single tests/data/$image.img; done
           done
           cc -std=c99 -Wall -Wextra -Wpedantic -Werror -Idist tests/single_file.c -o single-bare
           ./single-bare tests/data/ubi.img
+          ./single-bare tests/data/ubifs-journal.img
 
   fuzz:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev liblzma-dev liblzo2-dev
+      - run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev liblzma-dev liblzo2-dev libzstd-dev
       - run: cmake --preset fuzz
       - run: cmake --build build/fuzz
       - run: |
-          for f in jffs2 cramfs ubi; do
+          for f in jffs2 cramfs ubi ubifs; do
             rm -rf corpus && mkdir corpus && cp tests/data/*.img corpus/
             ./build/fuzz/fuzz_$f -max_total_time=60 -max_len=1048576 corpus
           done

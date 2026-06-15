@@ -42,6 +42,7 @@ extern "C" {
 #define MTDF_FORMAT_JFFS2 1
 #define MTDF_FORMAT_CRAMFS 2
 #define MTDF_FORMAT_UBI 3
+#define MTDF_FORMAT_UBIFS 4
 
 #define MTDF_TYPE_OTHER 0
 #define MTDF_TYPE_FILE 1
@@ -55,6 +56,7 @@ extern "C" {
 #define MTDF_FEATURE_ZLIB 0x1u
 #define MTDF_FEATURE_LZMA 0x2u
 #define MTDF_FEATURE_LZO 0x4u
+#define MTDF_FEATURE_ZSTD 0x8u
 
 #define MTDF_LOOKUP_FOLLOW 0x1u
 

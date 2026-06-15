@@ -104,38 +104,100 @@ static int walk(mtdf_fs_t *fs, mtdf_ino_t dir, char *path, size_t len)
     return status == MTDF_END ? MTDF_OK : status;
 }
 
-int main(int argc, char **argv)
+typedef struct volume {
+    mtdf_fs_t *fs;
+    mtdf_ino_t ino;
+} volume_t;
+
+static int volume_read(void *ctx, uint64_t offset, void *buf, size_t len)
+{
+    volume_t *v = ctx;
+    unsigned char *out = buf;
+    size_t got;
+
+    while (len > 0) {
+        if (mtdf_read(v->fs, v->ino, offset, out, len, &got) != MTDF_OK || got == 0)
+            return 1;
+        out += got;
+        offset += got;
+        len -= got;
+    }
+    return 0;
+}
+
+static int open_image(unsigned char *image, size_t len, int callback, const mtdf_options_t *opts, mtdf_fs_t **fs)
+{
+    return callback ? mtdf_open_cb(memory_read, image, len, opts, fs) : mtdf_open_mem(image, len, opts, fs);
+}
+
+static int open_volume(mtdf_fs_t *ubi, const char *name, const mtdf_options_t *opts, volume_t *v, mtdf_fs_t **fs)
+{
+    char path[300];
+    mtdf_stat_t st;
+    int status;
+
+    snprintf(path, sizeof(path), "/%s", name);
+    v->fs = ubi;
+    status = mtdf_lookup(ubi, path, 0, &v->ino);
+    if (status == MTDF_OK)
+        status = mtdf_stat(ubi, v->ino, &st);
+    return status == MTDF_OK ? mtdf_open_cb(volume_read, v, st.size, opts, fs) : status;
+}
+
+static int dump(mtdf_fs_t *fs, const char *name)
 {
     static char path[64 * 1024];
-    mtdf_options_t opts;
     mtdf_report_t r;
-    mtdf_fs_t *fs;
+    int status;
+
+    mtdf_report(fs, &r);
+    if (r.bad_header + r.bad_node_crc + r.bad_data_crc + r.bad_image_crc + r.bad_structure + r.orphans + r.loops +
+            r.duplicates + r.unknown !=
+        0)
+        fprintf(stderr, "dump: %s reports damage\n", name);
+    status = walk(fs, MTDF_ROOT, path, 0);
+    if (status != MTDF_OK)
+        fprintf(stderr, "dump: %s: %s %s\n", name, mtdf_strerror(status), mtdf_detail(fs));
+    return status;
+}
+
+int main(int argc, char **argv)
+{
+    mtdf_options_t opts;
+    mtdf_fs_t *outer = NULL;
+    mtdf_fs_t *fs = NULL;
+    volume_t v;
     unsigned char *image;
     const char *name = argv[argc - 1];
-    int callback = argc == 3 && strcmp(argv[1], "-c") == 0;
+    const char *vol = NULL;
+    int callback = 0;
+    int i;
     size_t len;
     int status;
 
-    if ((argc != 2 && !callback) || (image = slurp(name, &len)) == NULL) {
-        fprintf(stderr, "usage: dump [-c] <image>\n");
+    for (i = 1; i + 1 < argc; i++) {
+        if (strcmp(argv[i], "-c") == 0)
+            callback = 1;
+        else if (strcmp(argv[i], "-v") == 0 && i + 2 < argc)
+            vol = argv[++i];
+        else
+            break;
+    }
+    if (argc < 2 || i != argc - 1 || (image = slurp(name, &len)) == NULL) {
+        fprintf(stderr, "usage: dump [-c] [-v <name>] <image>\n");
         return 2;
     }
     memset(&opts, 0, sizeof(opts));
     opts.max_total_bytes = UINT64_MAX;
-    status = callback ? mtdf_open_cb(memory_read, image, len, &opts, &fs) : mtdf_open_mem(image, len, &opts, &fs);
-    if (status == MTDF_OK) {
-        mtdf_report(fs, &r);
-        if (r.bad_header + r.bad_node_crc + r.bad_data_crc + r.bad_image_crc + r.bad_structure + r.orphans +
-                r.loops + r.duplicates + r.unknown !=
-            0)
-            fprintf(stderr, "dump: %s reports damage\n", name);
-        status = walk(fs, MTDF_ROOT, path, 0);
-        if (status != MTDF_OK)
-            fprintf(stderr, "dump: %s: %s %s\n", name, mtdf_strerror(status), mtdf_detail(fs));
-        mtdf_close(fs);
-    } else {
+    status = open_image(image, len, callback, &opts, vol != NULL ? &outer : &fs);
+    if (status == MTDF_OK && vol != NULL)
+        status = open_volume(outer, vol, &opts, &v, &fs);
+    if (status == MTDF_OK)
+        status = dump(fs, name);
+    else
         fprintf(stderr, "dump: %s: %s\n", name, mtdf_strerror(status));
-    }
+    mtdf_close(fs);
+    mtdf_close(outer);
     free(image);
     return status == MTDF_OK ? 0 : 1;
 }

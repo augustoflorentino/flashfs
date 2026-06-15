@@ -12,7 +12,8 @@
 static const char *data_dir;
 
 static const char *const images[] = {"small-jffs2-le-zlib.img", "small-jffs2-be-lzma.img", "small-cramfs-le.img",
-                                     "small-cramfs-be.img", "ubi.img"};
+                                     "small-cramfs-be.img",     "ubi.img",                 "small-ubifs-zstd.img",
+                                     "ubifs-journal.img"};
 
 static double now_ms(void)
 {

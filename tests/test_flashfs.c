@@ -23,11 +23,13 @@ static void test_strings(void)
     CHECK(strcmp(mtdf_format_name(MTDF_FORMAT_JFFS2), "jffs2") == 0);
     CHECK(strcmp(mtdf_format_name(MTDF_FORMAT_CRAMFS), "cramfs") == 0);
     CHECK(strcmp(mtdf_format_name(MTDF_FORMAT_UBI), "ubi") == 0);
+    CHECK(strcmp(mtdf_format_name(MTDF_FORMAT_UBIFS), "ubifs") == 0);
     CHECK(mtdf_format_name(99) != NULL);
     for (status = MTDF_OK; status <= MTDF_ERR_RANGE; status++)
         CHECK(mtdf_strerror(status) != NULL && mtdf_strerror(status)[0] != '\0');
     CHECK(mtdf_strerror(-1) != NULL);
-    CHECK((mtdf_features() & ~(unsigned)(MTDF_FEATURE_ZLIB | MTDF_FEATURE_LZMA | MTDF_FEATURE_LZO)) == 0);
+    CHECK((mtdf_features() & ~(unsigned)(MTDF_FEATURE_ZLIB | MTDF_FEATURE_LZMA | MTDF_FEATURE_LZO |
+                                           MTDF_FEATURE_ZSTD)) == 0);
 }
 
 static void test_open_arguments(void)
@@ -52,7 +54,7 @@ static void test_open_arguments(void)
     opts.alloc_fn = counter_alloc;
     CHECK_EQ(mtdf_open_mem(garbage, sizeof(garbage), &opts, &fs), MTDF_ERR_ARG);
     memset(&opts, 0, sizeof(opts));
-    opts.format = 4;
+    opts.format = MTDF_FORMAT_UBIFS + 1;
     CHECK_EQ(mtdf_open_mem(garbage, sizeof(garbage), &opts, &fs), MTDF_ERR_ARG);
     CHECK_EQ(mtdf_open_cb(NULL, NULL, 10, NULL, &fs), MTDF_ERR_ARG);
 
@@ -61,6 +63,8 @@ static void test_open_arguments(void)
         opts.format = MTDF_FORMAT_CRAMFS;
         CHECK_EQ(mtdf_open_mem(b.data, b.len, &opts, &fs), MTDF_ERR_FORMAT);
         opts.format = MTDF_FORMAT_UBI;
+        CHECK_EQ(mtdf_open_mem(b.data, b.len, &opts, &fs), MTDF_ERR_FORMAT);
+        opts.format = MTDF_FORMAT_UBIFS;
         CHECK_EQ(mtdf_open_mem(b.data, b.len, &opts, &fs), MTDF_ERR_FORMAT);
         opts.format = MTDF_FORMAT_JFFS2;
         CHECK_EQ(mtdf_open_mem(b.data, b.len, &opts, &fs), MTDF_OK);
@@ -680,6 +684,156 @@ static void test_with_codecs(void)
     test_readlink_damaged();
 }
 
+static void test_ubifs_images(void)
+{
+    static const struct {
+        const char *name;
+        size_t big_len;
+    } images[] = {{"ubifs-lzo.img", 70000}, {"small-ubifs-zstd.img", 5000}};
+    mtdf_info_t info;
+    mtdf_report_t r;
+    mtdf_fs_t *fs;
+    buf_t b = {0};
+    size_t i;
+
+    for (i = 0; i < sizeof(images) / sizeof(images[0]); i++) {
+        if (open_image(&b, images[i].name, &fs) != MTDF_OK) {
+            printf("%s does not open\n", images[i].name);
+            test_failures++;
+            continue;
+        }
+        CHECK_EQ(mtdf_info(fs, &info), MTDF_OK);
+        CHECK_EQ(info.format, MTDF_FORMAT_UBIFS);
+        CHECK_EQ(info.big_endian, 0);
+        CHECK_EQ(info.entries, 16);
+        CHECK_EQ(info.block_size, 15872);
+        CHECK_EQ(info.unit_size, 4096);
+        CHECK_EQ(mtdf_report(fs, &r), MTDF_OK);
+        CHECK_EQ(r.bad_header + r.bad_node_crc + r.bad_data_crc + r.bad_structure + r.bad_name, 0);
+        CHECK_EQ(r.superseded + r.orphans + r.loops + r.duplicates + r.unknown, 0);
+        check_tree(fs, images[i].big_len);
+        mtdf_close(fs);
+    }
+    buf_free(&b);
+}
+
+static void check_file(mtdf_fs_t *fs, const char *path, const unsigned char *want, size_t len)
+{
+    unsigned char got_data[10016];
+    mtdf_ino_t ino;
+    mtdf_stat_t st;
+    size_t got = 0;
+
+    CHECK_EQ(mtdf_lookup(fs, path, 0, &ino), MTDF_OK);
+    CHECK_EQ(mtdf_stat(fs, ino, &st), MTDF_OK);
+    CHECK_EQ(st.size, len);
+    CHECK_EQ(mtdf_read(fs, ino, 0, got_data, sizeof(got_data), &got), MTDF_OK);
+    CHECK(got == len && memcmp(got_data, want, len) == 0);
+}
+
+static void test_ubifs_journal(void)
+{
+    static unsigned char c[10000];
+    mtdf_report_t r;
+    mtdf_info_t info;
+    mtdf_fs_t *fs;
+    mtdf_ino_t ino;
+    buf_t b = {0};
+    size_t i;
+
+    if (open_image(&b, "ubifs-journal.img", &fs) != MTDF_OK) {
+        printf("ubifs-journal.img does not open\n");
+        test_failures++;
+        buf_free(&b);
+        return;
+    }
+    for (i = 0; i < sizeof(c); i++)
+        c[i] = i < 5000 ? (unsigned char)(i * 13) : 0;
+    check_file(fs, "/a.txt", (const unsigned char *)"changed\n", 8);
+    check_file(fs, "/new.txt", (const unsigned char *)"new content\n", 12);
+    check_file(fs, "/b2", (const unsigned char *)"bbbb\nbbbb\nbbbb\nbbbb\nbbbb\nbbbb\nbbbb\nbbbb\nbbbb\nbbbb\n", 50);
+    check_file(fs, "/dir/c", c, sizeof(c));
+    CHECK_EQ(mtdf_lookup(fs, "/gone", 0, &ino), MTDF_ERR_NOENT);
+    CHECK_EQ(mtdf_lookup(fs, "/dir/b", 0, &ino), MTDF_ERR_NOENT);
+    CHECK_EQ(mtdf_lookup(fs, "/cut-short", 0, &ino), MTDF_ERR_NOENT);
+    CHECK_EQ(mtdf_info(fs, &info), MTDF_OK);
+    CHECK_EQ(info.entries, 6);
+    CHECK_EQ(mtdf_report(fs, &r), MTDF_OK);
+    CHECK_EQ(r.bad_node_crc, 1);
+    CHECK_EQ(r.superseded, 9);
+    CHECK_EQ(r.bad_header + r.bad_data_crc + r.bad_structure + r.orphans + r.loops + r.duplicates, 0);
+    mtdf_close(fs);
+    buf_free(&b);
+}
+
+static void ubifs_reseal(unsigned char *node)
+{
+    uint32_t len = (uint32_t)node[16] | (uint32_t)node[17] << 8 | (uint32_t)node[18] << 16 | (uint32_t)node[19] << 24;
+    uint32_t crc = 0xffffffffu;
+    uint32_t i;
+    int bit;
+
+    for (i = 8; i < len; i++) {
+        crc ^= node[i];
+        for (bit = 0; bit < 8; bit++)
+            crc = crc & 1 ? (crc >> 1) ^ 0xedb88320u : crc >> 1;
+    }
+    for (i = 0; i < 4; i++)
+        node[4 + i] = (unsigned char)(crc >> (8 * i));
+}
+
+static int ubifs_read_patched(const buf_t *b, size_t node, size_t at, unsigned char value)
+{
+    unsigned char *copy = malloc(b->len);
+    unsigned char out[16];
+    mtdf_fs_t *fs;
+    mtdf_ino_t ino;
+    size_t got;
+    int status;
+
+    if (copy == NULL)
+        abort();
+    memcpy(copy, b->data, b->len);
+    copy[node + at] = value;
+    ubifs_reseal(copy + node);
+    status = mtdf_open_mem(copy, b->len, NULL, &fs);
+    if (status == MTDF_OK) {
+        status = mtdf_lookup(fs, "/a.txt", 0, &ino);
+        if (status == MTDF_OK)
+            status = mtdf_read(fs, ino, 0, out, sizeof(out), &got);
+        mtdf_close(fs);
+    }
+    free(copy);
+    return status;
+}
+
+static void test_ubifs_refusals(void)
+{
+    const size_t leb = 15872;
+    mtdf_report_t r;
+    mtdf_info_t info;
+    mtdf_fs_t *fs;
+    buf_t b = {0};
+
+    if (buf_load(&b, data_dir, "ubifs-journal.img") != 0) {
+        test_failures++;
+        return;
+    }
+    CHECK_EQ(ubifs_read_patched(&b, 0, 28, 0x20), MTDF_ERR_UNSUPPORTED);
+    CHECK_EQ(ubifs_read_patched(&b, 14 * leb + 344, 108, 0x40), MTDF_ERR_UNSUPPORTED);
+    CHECK_EQ(ubifs_read_patched(&b, 14 * leb + 288, 44, 9), MTDF_ERR_UNSUPPORTED);
+    CHECK_EQ(ubifs_read_patched(&b, 14 * leb + 288, 44, 0), MTDF_OK);
+
+    b.data[13 * leb + 40] ^= 1;
+    CHECK_EQ(mtdf_open_mem(b.data, b.len, NULL, &fs), MTDF_OK);
+    CHECK_EQ(mtdf_report(fs, &r), MTDF_OK);
+    CHECK_EQ(r.bad_node_crc, 2);
+    CHECK_EQ(mtdf_info(fs, &info), MTDF_OK);
+    CHECK(info.entries >= 1 && info.entries < 6);
+    mtdf_close(fs);
+    buf_free(&b);
+}
+
 static void test_without_codecs(void)
 {
     static const struct {
@@ -689,6 +843,8 @@ static void test_without_codecs(void)
         {"jffs2-le-zlib.img", MTDF_FEATURE_ZLIB}, {"jffs2-be-lzma.img", MTDF_FEATURE_LZMA},
         {"cramfs-le.img", MTDF_FEATURE_ZLIB},     {"jffs2-le-rtime.img", 0},
         {"jffs2-be-none.img", 0},                 {"ubi.img", 0},
+        {"ubifs-lzo.img", MTDF_FEATURE_LZO},      {"small-ubifs-zstd.img", MTDF_FEATURE_ZSTD},
+        {"ubifs-journal.img", 0},
     };
     static unsigned char scratch[65536];
     unsigned features = mtdf_features();
@@ -726,6 +882,10 @@ int main(int argc, char **argv)
     test_open_arguments();
     test_without_codecs();
     test_regressions();
+    test_ubifs_journal();
+    test_ubifs_refusals();
+    if ((mtdf_features() & (MTDF_FEATURE_LZO | MTDF_FEATURE_ZSTD)) == (MTDF_FEATURE_LZO | MTDF_FEATURE_ZSTD))
+        test_ubifs_images();
     if ((mtdf_features() & (MTDF_FEATURE_ZLIB | MTDF_FEATURE_LZMA)) == (MTDF_FEATURE_ZLIB | MTDF_FEATURE_LZMA))
         test_with_codecs();
     else
