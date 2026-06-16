@@ -6,8 +6,14 @@ adds what mkfs.ubifs never writes, a journal, the way the kernel lays it
 out: a reference node in the log naming a bud, and in the bud a new file, an
 overwrite, a deletion, a rename, a truncation followed by a sparse
 extension, and a last node cut short as a power loss leaves it.
+ubi-ubifs.img holds that image as UBI volume rootfs, on 16 KiB erase
+blocks, whose LEB is too small for the 128 volume table records.
 
     python3 tests/data/make_ubifs.py tests/data
+
+mkfs.ubifs writes a new UUID and the current time into each image, so the
+bytes differ on every run; the layout the tests read at fixed offsets
+(LEB 13 the index, LEB 14 the journal) does not.
 """
 
 import os
@@ -189,6 +195,16 @@ def journal(img):
     img[free:free + 64] = seal(ref)
     return img
 
+def in_ubi(image, out):
+    """The image as the dynamic UBI volume rootfs; LEB 15872 = 16 KiB less 512 bytes of headers."""
+    with tempfile.TemporaryDirectory() as tmp:
+        ini = os.path.join(tmp, "ubi.ini")
+        with open(ini, "w") as f:
+            f.write("[rootfs]\nmode=ubi\nimage=%s\nvol_id=0\nvol_type=dynamic\nvol_name=rootfs\n"
+                    "vol_flags=autoresize\n" % image)
+        subprocess.run(["ubinize", "-o", out, "-p", "16KiB", "-m", "512", "-s", "256", ini], check=True,
+                       stderr=subprocess.DEVNULL)
+
 def main(out):
     images = {
         "ubifs-lzo.img": mkfs(TREE, "lzo", os.path.join(out, "ubifs-lzo.img")),
@@ -198,6 +214,7 @@ def main(out):
     for name, img in images.items():
         with open(os.path.join(out, name), "wb") as f:
             f.write(img)
+    in_ubi(os.path.join(out, "ubifs-journal.img"), os.path.join(out, "ubi-ubifs.img"))
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:

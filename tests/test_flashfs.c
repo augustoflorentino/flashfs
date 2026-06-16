@@ -266,6 +266,28 @@ static uint64_t hash_tree(mtdf_fs_t *fs, mtdf_ino_t dir, uint64_t h)
     return (h ^ (uint64_t)status) * 0x100000001b3ull;
 }
 
+static void test_ubi_small_leb(void)
+{
+    mtdf_report_t r;
+    mtdf_info_t info;
+    mtdf_fs_t *fs;
+    buf_t b = {0};
+
+    if (open_image(&b, "ubi-ubifs.img", &fs) != MTDF_OK) {
+        printf("ubi-ubifs.img does not open\n");
+        test_failures++;
+        buf_free(&b);
+        return;
+    }
+    CHECK_EQ(mtdf_info(fs, &info), MTDF_OK);
+    CHECK_EQ(info.block_size, 16384);
+    CHECK_EQ(info.unit_size, 15872);
+    CHECK_EQ(mtdf_report(fs, &r), MTDF_OK);
+    CHECK_EQ(r.bad_header + r.bad_node_crc + r.bad_data_crc + r.bad_structure + r.orphans + r.unknown, 0);
+    mtdf_close(fs);
+    buf_free(&b);
+}
+
 static void test_regressions(void)
 {
     static const char *names[] = {"regress-cramfs-empty-span.img", "regress-cramfs-shared-ref.img"};
@@ -731,22 +753,14 @@ static void check_file(mtdf_fs_t *fs, const char *path, const unsigned char *wan
     CHECK(got == len && memcmp(got_data, want, len) == 0);
 }
 
-static void test_ubifs_journal(void)
+static void check_journal(mtdf_fs_t *fs)
 {
     static unsigned char c[10000];
     mtdf_report_t r;
     mtdf_info_t info;
-    mtdf_fs_t *fs;
     mtdf_ino_t ino;
-    buf_t b = {0};
     size_t i;
 
-    if (open_image(&b, "ubifs-journal.img", &fs) != MTDF_OK) {
-        printf("ubifs-journal.img does not open\n");
-        test_failures++;
-        buf_free(&b);
-        return;
-    }
     for (i = 0; i < sizeof(c); i++)
         c[i] = i < 5000 ? (unsigned char)(i * 13) : 0;
     check_file(fs, "/a.txt", (const unsigned char *)"changed\n", 8);
@@ -762,7 +776,20 @@ static void test_ubifs_journal(void)
     CHECK_EQ(r.bad_node_crc, 1);
     CHECK_EQ(r.superseded, 9);
     CHECK_EQ(r.bad_header + r.bad_data_crc + r.bad_structure + r.orphans + r.loops + r.duplicates, 0);
-    mtdf_close(fs);
+}
+
+static void test_ubifs_journal(void)
+{
+    mtdf_fs_t *fs;
+    buf_t b = {0};
+
+    if (open_image(&b, "ubifs-journal.img", &fs) != MTDF_OK) {
+        printf("ubifs-journal.img does not open\n");
+        test_failures++;
+    } else {
+        check_journal(fs);
+        mtdf_close(fs);
+    }
     buf_free(&b);
 }
 
@@ -882,6 +909,7 @@ int main(int argc, char **argv)
     test_open_arguments();
     test_without_codecs();
     test_regressions();
+    test_ubi_small_leb();
     test_ubifs_journal();
     test_ubifs_refusals();
     if ((mtdf_features() & (MTDF_FEATURE_LZO | MTDF_FEATURE_ZSTD)) == (MTDF_FEATURE_LZO | MTDF_FEATURE_ZSTD))

@@ -408,12 +408,13 @@ static int mtdf_u_table_entry(mtdf_fs_t *fs, mtdf_ubi_t *u, uint32_t id, const u
 
 static int mtdf_u_table(mtdf_fs_t *fs, mtdf_ubi_t *u, const mtdf_uvol_t *layout)
 {
+    uint32_t slots = (u->peb_size - u->data_offset) / MTDF_U_RECORD;
     const uint8_t *r;
     uint32_t id;
     int erased;
     int status;
 
-    for (id = 0; id < MTDF_U_MAX_VOLUMES; id++) {
+    for (id = 0; id < slots && id < MTDF_U_MAX_VOLUMES; id++) {
         if (!mtdf_u_record(fs, u, layout, id, &r)) {
             if (mtdf_u_find(u, layout->first, layout->count, 0) != MTDF_NONE &&
                 (mtdf_all_ff(fs, (uint64_t)mtdf_u_leb(u, layout->first)->peb * u->peb_size +
