@@ -7,6 +7,11 @@ Images come from firmware someone else built, so the library treats them as host
 offset and count is checked against the bytes present and against a budget before it is used, and
 a damaged image still yields what can be read, with a report of what could not.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/flash-dark.svg">
+  <img src="docs/images/flash-light.svg" alt="Three public OpenWrt images: two JFFS2 root filesystems holding twice their size in files, and a UBI image whose three volumes flashfs opens as files" width="1000">
+</picture>
+
 ## Build and install
 
 ```sh
