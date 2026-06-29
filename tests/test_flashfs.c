@@ -793,6 +793,49 @@ static void test_ubifs_journal(void)
     buf_free(&b);
 }
 
+static void test_open_file(void)
+{
+    static const buf_t nothing = {0};
+    mtdf_options_t opts;
+    mtdf_fs_t *ubi;
+    mtdf_fs_t *fs;
+    mtdf_ino_t vol;
+    source_t src;
+    buf_t b = {0};
+
+    if (open_image(&b, "ubi-ubifs.img", &ubi) != MTDF_OK) {
+        printf("ubi-ubifs.img does not open\n");
+        test_failures++;
+        buf_free(&b);
+        return;
+    }
+    CHECK_EQ(mtdf_lookup(ubi, "/rootfs", 0, &vol), MTDF_OK);
+    CHECK_EQ(mtdf_open_file(ubi, vol, NULL, &fs), MTDF_OK);
+    check_journal(fs);
+    mtdf_close(fs);
+
+    CHECK_EQ(mtdf_open_file(ubi, MTDF_ROOT, NULL, &fs), MTDF_ERR_TYPE);
+    CHECK(fs == NULL);
+    CHECK_EQ(mtdf_open_file(ubi, 99, NULL, &fs), MTDF_ERR_ARG);
+    CHECK_EQ(mtdf_open_file(NULL, vol, NULL, &fs), MTDF_ERR_ARG);
+    CHECK_EQ(mtdf_open_file(ubi, vol, NULL, NULL), MTDF_ERR_ARG);
+    memset(&opts, 0, sizeof(opts));
+    opts.format = MTDF_FORMAT_JFFS2;
+    CHECK_EQ(mtdf_open_file(ubi, vol, &opts, &fs), MTDF_ERR_FORMAT);
+    mtdf_close(ubi);
+
+    memset(&src, 0, sizeof(src));
+    src.image = &b;
+    src.fail_at = -1;
+    CHECK_EQ(mtdf_open_cb(source_read, &src, b.len, NULL, &ubi), MTDF_OK);
+    CHECK_EQ(mtdf_lookup(ubi, "/rootfs", 0, &vol), MTDF_OK);
+    src.image = &nothing;
+    CHECK_EQ(mtdf_open_file(ubi, vol, NULL, &fs), MTDF_ERR_IO);
+    CHECK(mtdf_detail(ubi)[0] != '\0');
+    mtdf_close(ubi);
+    buf_free(&b);
+}
+
 static void ubifs_reseal(unsigned char *node)
 {
     uint32_t len = (uint32_t)node[16] | (uint32_t)node[17] << 8 | (uint32_t)node[18] << 16 | (uint32_t)node[19] << 24;
@@ -912,6 +955,7 @@ int main(int argc, char **argv)
     test_ubi_small_leb();
     test_ubifs_journal();
     test_ubifs_refusals();
+    test_open_file();
     if ((mtdf_features() & (MTDF_FEATURE_LZO | MTDF_FEATURE_ZSTD)) == (MTDF_FEATURE_LZO | MTDF_FEATURE_ZSTD))
         test_ubifs_images();
     if ((mtdf_features() & (MTDF_FEATURE_ZLIB | MTDF_FEATURE_LZMA)) == (MTDF_FEATURE_ZLIB | MTDF_FEATURE_LZMA))

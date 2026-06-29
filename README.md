@@ -68,26 +68,21 @@ if (mtdf_lookup(fs, "/etc/passwd", MTDF_LOOKUP_FOLLOW, &ino) == MTDF_OK &&
 mtdf_close(fs);
 ```
 
-A UBIFS usually lives in a UBI volume. flashfs shows each volume as a file, and the UBIFS in it opens
-through a callback that reads that file:
+A UBIFS usually lives in a UBI volume. flashfs shows each volume as a file, and `mtdf_open_file`
+opens the image stored in a file of another handle:
 
 ```c
-static int volume_read(void *ctx, uint64_t offset, void *buf, size_t len)
-{
-    struct volume *v = ctx; /* the UBI handle and the volume's inode */
-    size_t got;
+mtdf_fs_t *ubi, *rootfs;
+mtdf_ino_t vol;
 
-    for (; len > 0; offset += got, len -= got, buf = (char *)buf + got)
-        if (mtdf_read(v->ubi, v->ino, offset, buf, len, &got) != MTDF_OK || got == 0)
-            return -1;
-    return 0;
+if (mtdf_open_mem(image, image_len, NULL, &ubi) == MTDF_OK &&
+    mtdf_lookup(ubi, "/rootfs", 0, &vol) == MTDF_OK &&
+    mtdf_open_file(ubi, vol, NULL, &rootfs) == MTDF_OK) {
+    /* read rootfs like any handle */
+    mtdf_close(rootfs); /* before ubi, which it reads from */
 }
-
-/* ubi from mtdf_open_mem, v.ino from mtdf_lookup(ubi, "/rootfs", ...), size from mtdf_stat */
-mtdf_open_cb(volume_read, &v, st.size, NULL, &rootfs);
+mtdf_close(ubi);
 ```
-
-Close the UBIFS handle before the UBI one. A UBIFS image written by `mkfs.ubifs` opens directly.
 
 [`examples/mtdf-ls.c`](examples/mtdf-ls.c) lists an image read through a callback;
 [`examples/mtdf-extract.c`](examples/mtdf-extract.c) extracts it into a new directory without

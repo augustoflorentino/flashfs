@@ -78,6 +78,8 @@ struct mtdf_fs {
     uint64_t window_off;
     size_t window_len;
     int io_failed;
+    mtdf_fs_t *outer;
+    mtdf_ino_t outer_ino;
 
     uint64_t max_total;
     uint64_t max_file;

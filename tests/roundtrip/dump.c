@@ -104,44 +104,20 @@ static int walk(mtdf_fs_t *fs, mtdf_ino_t dir, char *path, size_t len)
     return status == MTDF_END ? MTDF_OK : status;
 }
 
-typedef struct volume {
-    mtdf_fs_t *fs;
-    mtdf_ino_t ino;
-} volume_t;
-
-static int volume_read(void *ctx, uint64_t offset, void *buf, size_t len)
-{
-    volume_t *v = ctx;
-    unsigned char *out = buf;
-    size_t got;
-
-    while (len > 0) {
-        if (mtdf_read(v->fs, v->ino, offset, out, len, &got) != MTDF_OK || got == 0)
-            return 1;
-        out += got;
-        offset += got;
-        len -= got;
-    }
-    return 0;
-}
-
 static int open_image(unsigned char *image, size_t len, int callback, const mtdf_options_t *opts, mtdf_fs_t **fs)
 {
     return callback ? mtdf_open_cb(memory_read, image, len, opts, fs) : mtdf_open_mem(image, len, opts, fs);
 }
 
-static int open_volume(mtdf_fs_t *ubi, const char *name, const mtdf_options_t *opts, volume_t *v, mtdf_fs_t **fs)
+static int open_volume(mtdf_fs_t *ubi, const char *name, const mtdf_options_t *opts, mtdf_fs_t **fs)
 {
     char path[300];
-    mtdf_stat_t st;
+    mtdf_ino_t ino;
     int status;
 
     snprintf(path, sizeof(path), "/%s", name);
-    v->fs = ubi;
-    status = mtdf_lookup(ubi, path, 0, &v->ino);
-    if (status == MTDF_OK)
-        status = mtdf_stat(ubi, v->ino, &st);
-    return status == MTDF_OK ? mtdf_open_cb(volume_read, v, st.size, opts, fs) : status;
+    status = mtdf_lookup(ubi, path, 0, &ino);
+    return status == MTDF_OK ? mtdf_open_file(ubi, ino, opts, fs) : status;
 }
 
 static int dump(mtdf_fs_t *fs, const char *name)
@@ -166,7 +142,6 @@ int main(int argc, char **argv)
     mtdf_options_t opts;
     mtdf_fs_t *outer = NULL;
     mtdf_fs_t *fs = NULL;
-    volume_t v;
     unsigned char *image;
     const char *name = argv[argc - 1];
     const char *vol = NULL;
@@ -191,7 +166,7 @@ int main(int argc, char **argv)
     opts.max_total_bytes = UINT64_MAX;
     status = open_image(image, len, callback, &opts, vol != NULL ? &outer : &fs);
     if (status == MTDF_OK && vol != NULL)
-        status = open_volume(outer, vol, &opts, &v, &fs);
+        status = open_volume(outer, vol, &opts, &fs);
     if (status == MTDF_OK)
         status = dump(fs, name);
     else

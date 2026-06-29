@@ -224,6 +224,49 @@ int mtdf_open_cb(mtdf_read_fn read_fn, void *read_ctx, uint64_t image_len, const
     return mtdf_open(fs, opts, out_fs);
 }
 
+static int mtdf_outer_read(void *ctx, uint64_t offset, void *buf, size_t buf_len)
+{
+    mtdf_fs_t *fs = ctx;
+    uint8_t *out = buf;
+    size_t got;
+
+    while (buf_len > 0) {
+        if (mtdf_read(fs->outer, fs->outer_ino, offset, out, buf_len, &got) != MTDF_OK || got == 0)
+            return 1;
+        out += got;
+        offset += got;
+        buf_len -= got;
+    }
+    return 0;
+}
+
+int mtdf_open_file(mtdf_fs_t *outer, mtdf_ino_t ino, const mtdf_options_t *opts, mtdf_fs_t **out_fs)
+{
+    mtdf_stat_t st;
+    mtdf_fs_t *fs;
+    int status;
+
+    if (out_fs == NULL)
+        return MTDF_ERR_ARG;
+    *out_fs = NULL;
+    if (outer == NULL || mtdf_check_options(opts) != MTDF_OK)
+        return MTDF_ERR_ARG;
+    status = mtdf_stat(outer, ino, &st);
+    if (status != MTDF_OK)
+        return status;
+    if (st.type != MTDF_TYPE_FILE)
+        return MTDF_ERR_TYPE;
+    fs = mtdf_create(opts);
+    if (fs == NULL)
+        return MTDF_ERR_NOMEM;
+    fs->read_fn = mtdf_outer_read;
+    fs->read_ctx = fs;
+    fs->outer = outer;
+    fs->outer_ino = ino;
+    fs->len = st.size;
+    return mtdf_open(fs, opts, out_fs);
+}
+
 void mtdf_close(mtdf_fs_t *fs)
 {
     if (fs == NULL)

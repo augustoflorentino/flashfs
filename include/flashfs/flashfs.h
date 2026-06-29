@@ -139,6 +139,8 @@ MTDF_API int mtdf_open_mem(const void *data, size_t data_len, const mtdf_options
 MTDF_API int mtdf_open_cb(mtdf_read_fn read_fn, void *read_ctx, uint64_t image_len, const mtdf_options_t *opts,
                           mtdf_fs_t **out_fs);
 
+MTDF_API int mtdf_open_file(mtdf_fs_t *outer, mtdf_ino_t ino, const mtdf_options_t *opts, mtdf_fs_t **out_fs);
+
 MTDF_API void mtdf_close(mtdf_fs_t *fs);
 
 MTDF_API int mtdf_lookup(mtdf_fs_t *fs, const char *path, uint32_t flags, mtdf_ino_t *out_ino);
