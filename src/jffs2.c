@@ -16,6 +16,14 @@
 #define MTDF_J_INODE_SIZE 68u
 #define MTDF_J_DIRENT_CRC_SPAN 32u
 #define MTDF_J_INODE_CRC_SPAN 60u
+#define MTDF_J_XATTR_SIZE 32u
+#define MTDF_J_XREF_SIZE 28u
+#define MTDF_J_XATTR_CRC_SPAN 28u
+#define MTDF_J_XREF_CRC_SPAN 24u
+#define MTDF_J_XDATUM_DELETED 0xffffffffu
+#define MTDF_J_XREF_DELETED 0x1u
+#define MTDF_J_PREFIX_ACL_ACCESS 3u
+#define MTDF_J_PREFIX_ACL_DEFAULT 4u
 #define MTDF_J_ROOT_INO 1u
 #define MTDF_J_MAX_DATA (128u * 1024u)
 #define MTDF_J_SCAN_CHUNK (64u * 1024u)
@@ -58,6 +66,22 @@ typedef struct mtdf_jnode {
     uint32_t compr;
 } mtdf_jnode_t;
 
+typedef struct mtdf_jxdatum {
+    uint64_t pos;
+    uint32_t xid;
+    uint32_t version;
+    uint32_t value_len;
+    uint8_t prefix;
+    uint8_t name_len;
+    uint8_t unused[2];
+} mtdf_jxdatum_t;
+
+typedef struct mtdf_jxref {
+    uint32_t ino;
+    uint32_t xid;
+    uint32_t xseqno;
+} mtdf_jxref_t;
+
 typedef struct mtdf_jgroup {
     uint32_t ino;
     uint32_t first;
@@ -76,6 +100,8 @@ typedef struct mtdf_jffs2 {
     mtdf_vec_t cleanmarkers;
     uint32_t crossed;
     mtdf_vec_t dirs;
+    mtdf_vec_t xdatums;
+    mtdf_vec_t xrefs;
     mtdf_vec_t chain;
     uint32_t perm_group;
     uint32_t perm_max;
@@ -265,6 +291,69 @@ static int mtdf_j_inode_parse(mtdf_fs_t *fs, mtdf_jffs2_t *j, uint64_t pos, uint
     return MTDF_OK;
 }
 
+static int mtdf_j_push(mtdf_fs_t *fs, mtdf_vec_t *vec, const void *item, size_t size)
+{
+    int status = mtdf_count(fs, 1);
+
+    if (status == MTDF_OK)
+        status = mtdf_vec_grow(fs, vec, size, 1);
+    if (status == MTDF_OK)
+        memcpy((uint8_t *)vec->data + vec->len++ * size, item, size);
+    return status;
+}
+
+static int mtdf_j_xattr_parse(mtdf_fs_t *fs, mtdf_jffs2_t *j, uint64_t pos, uint32_t totlen)
+{
+    const uint8_t *n;
+    mtdf_jxdatum_t x;
+    uint32_t want;
+    uint32_t crc;
+    int status;
+
+    if (totlen < MTDF_J_XATTR_SIZE)
+        return fs->report.bad_header++, MTDF_OK;
+    status = mtdf_src_get(fs, pos, MTDF_J_XATTR_SIZE, NULL, &n);
+    if (status != MTDF_OK)
+        return status;
+    if (mtdf_crc(fs, 0, n, MTDF_J_XATTR_CRC_SPAN) != mtdf_get32(n + 28, j->big))
+        return fs->report.bad_node_crc++, MTDF_OK;
+    memset(&x, 0, sizeof(x));
+    x.pos = pos;
+    x.xid = mtdf_get32(n + 12, j->big);
+    x.version = mtdf_get32(n + 16, j->big);
+    x.prefix = n[20];
+    x.name_len = n[21];
+    x.value_len = mtdf_get16(n + 22, j->big);
+    want = mtdf_get32(n + 24, j->big);
+    if (MTDF_J_XATTR_SIZE + x.name_len + 1u + x.value_len > totlen)
+        return fs->report.bad_header++, MTDF_OK;
+    status = mtdf_src_crc(fs, pos + MTDF_J_XATTR_SIZE, x.name_len + 1u + x.value_len, 0, &crc);
+    if (status != MTDF_OK)
+        return status;
+    if (crc != want)
+        return fs->report.bad_data_crc++, MTDF_OK;
+    return mtdf_j_push(fs, &j->xdatums, &x, sizeof(x));
+}
+
+static int mtdf_j_xref_parse(mtdf_fs_t *fs, mtdf_jffs2_t *j, uint64_t pos, uint32_t totlen)
+{
+    const uint8_t *n;
+    mtdf_jxref_t r;
+    int status;
+
+    if (totlen < MTDF_J_XREF_SIZE)
+        return fs->report.bad_header++, MTDF_OK;
+    status = mtdf_src_get(fs, pos, MTDF_J_XREF_SIZE, NULL, &n);
+    if (status != MTDF_OK)
+        return status;
+    if (mtdf_crc(fs, 0, n, MTDF_J_XREF_CRC_SPAN) != mtdf_get32(n + 24, j->big))
+        return fs->report.bad_node_crc++, MTDF_OK;
+    r.ino = mtdf_get32(n + 12, j->big);
+    r.xid = mtdf_get32(n + 16, j->big);
+    r.xseqno = mtdf_get32(n + 20, j->big);
+    return mtdf_j_push(fs, &j->xrefs, &r, sizeof(r));
+}
+
 static int mtdf_j_record(mtdf_fs_t *fs, mtdf_jffs2_t *j, uint64_t pos, uint32_t nodetype, uint32_t totlen)
 {
     int status;
@@ -274,6 +363,10 @@ static int mtdf_j_record(mtdf_fs_t *fs, mtdf_jffs2_t *j, uint64_t pos, uint32_t 
         return mtdf_j_dirent_parse(fs, j, pos, totlen);
     if (nodetype == MTDF_J_INODE)
         return mtdf_j_inode_parse(fs, j, pos, totlen);
+    if (nodetype == MTDF_J_XATTR)
+        return mtdf_j_xattr_parse(fs, j, pos, totlen);
+    if (nodetype == MTDF_J_XREF)
+        return mtdf_j_xref_parse(fs, j, pos, totlen);
     if (nodetype == MTDF_J_CLEANMARKER) {
         status = mtdf_vec_grow(fs, &j->cleanmarkers, sizeof(uint64_t), 1);
         if (status == MTDF_OK)
@@ -898,6 +991,193 @@ static void mtdf_j_links_and_orphans(mtdf_fs_t *fs, mtdf_jffs2_t *j)
     }
 }
 
+static int mtdf_j_by_xid_version(const void *ctx, const void *pa, const void *pb)
+{
+    const mtdf_jxdatum_t *a = pa;
+    const mtdf_jxdatum_t *b = pb;
+
+    (void)ctx;
+    if (a->xid != b->xid)
+        return a->xid < b->xid ? -1 : 1;
+    return (a->version > b->version) - (a->version < b->version);
+}
+
+static int mtdf_j_xdatums(mtdf_fs_t *fs, mtdf_jffs2_t *j)
+{
+    mtdf_jxdatum_t *x = j->xdatums.data;
+    size_t kept = 0;
+    size_t i;
+    int status;
+
+    status = mtdf_j_sort(fs, x, j->xdatums.len, sizeof(*x), mtdf_j_by_xid_version, NULL);
+    for (i = 0; status == MTDF_OK && i < j->xdatums.len; i++) {
+        if (i + 1 < j->xdatums.len && x[i].xid == x[i + 1].xid)
+            fs->report.superseded++;
+        else
+            x[kept++] = x[i];
+    }
+    j->xdatums.len = kept;
+    return status;
+}
+
+static uint32_t mtdf_j_find_xdatum(const mtdf_jffs2_t *j, uint32_t xid)
+{
+    const mtdf_jxdatum_t *x = j->xdatums.data;
+    uint32_t lo = 0;
+    uint32_t hi = (uint32_t)j->xdatums.len;
+    uint32_t mid;
+
+    while (lo < hi) {
+        mid = lo + (hi - lo) / 2;
+        if (x[mid].xid == xid)
+            return mid;
+        if (x[mid].xid < xid)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return MTDF_NONE;
+}
+
+static const char *mtdf_j_prefix(uint32_t prefix)
+{
+    switch (prefix) {
+    case 1:
+        return "user.";
+    case 2:
+        return "security.";
+    case MTDF_J_PREFIX_ACL_ACCESS:
+        return "system.posix_acl_access";
+    case MTDF_J_PREFIX_ACL_DEFAULT:
+        return "system.posix_acl_default";
+    case 5:
+        return "trusted.";
+    default:
+        return NULL;
+    }
+}
+
+static void mtdf_j_put(uint8_t *p, uint32_t value, int bytes)
+{
+    int i;
+
+    for (i = 0; i < bytes; i++)
+        p[i] = (uint8_t)(value >> (8 * i));
+}
+
+static int mtdf_j_acl_tag(uint32_t tag)
+{
+    return tag == 0x01 || tag == 0x02 || tag == 0x04 || tag == 0x08 || tag == 0x10 || tag == 0x20;
+}
+
+static int mtdf_j_acl(const uint8_t *in, size_t in_len, int big, uint8_t *out, uint32_t *out_len)
+{
+    size_t at = 4;
+    uint32_t len = 4;
+    uint32_t tag;
+    size_t size;
+
+    if (in_len < 4 || mtdf_get32(in, big) != 1)
+        return 0;
+    for (; at < in_len; at += size, len += 8) {
+        tag = in_len - at >= 4 ? mtdf_get16(in + at, big) : 0;
+        size = tag == 0x02 || tag == 0x08 ? 8 : 4;
+        if (!mtdf_j_acl_tag(tag) || in_len - at < size)
+            return 0;
+        if (out != NULL) {
+            mtdf_j_put(out + len, tag, 2);
+            mtdf_j_put(out + len + 2, mtdf_get16(in + at + 2, big), 2);
+            mtdf_j_put(out + len + 4, size == 8 ? mtdf_get32(in + at + 4, big) : 0xffffffffu, 4);
+        }
+    }
+    if (out != NULL)
+        mtdf_j_put(out, 2, 4);
+    *out_len = len;
+    return 1;
+}
+
+static int mtdf_j_is_acl(uint32_t prefix)
+{
+    return prefix == MTDF_J_PREFIX_ACL_ACCESS || prefix == MTDF_J_PREFIX_ACL_DEFAULT;
+}
+
+static int mtdf_j_value_len(mtdf_fs_t *fs, mtdf_jffs2_t *j, const mtdf_jxdatum_t *d, uint32_t *out_len)
+{
+    const uint8_t *value;
+    int status;
+
+    *out_len = d->value_len;
+    if (!mtdf_j_is_acl(d->prefix))
+        return MTDF_OK;
+    status = mtdf_src_get(fs, d->pos + MTDF_J_XATTR_SIZE + d->name_len + 1u, d->value_len, NULL, &value);
+    if (status == MTDF_OK && !mtdf_j_acl(value, d->value_len, j->big, NULL, out_len))
+        return fs->report.bad_structure++, MTDF_ERR_CORRUPT;
+    return status;
+}
+
+static int mtdf_j_xref_take(mtdf_fs_t *fs, mtdf_jffs2_t *j, const mtdf_jxref_t *r)
+{
+    uint32_t at = mtdf_j_find_xdatum(j, r->xid);
+    uint32_t group = mtdf_j_find_group(j, r->ino);
+    const mtdf_jxdatum_t *d = at == MTDF_NONE ? NULL : (const mtdf_jxdatum_t *)j->xdatums.data + at;
+    const char *prefix = d == NULL ? NULL : mtdf_j_prefix(d->prefix);
+    const uint8_t *name;
+    mtdf_xrec_t x;
+    int status;
+
+    if (d == NULL || group == MTDF_NONE)
+        return fs->report.orphans++, MTDF_OK;
+    if (d->version == MTDF_J_XDATUM_DELETED)
+        return fs->report.superseded++, MTDF_OK;
+    if (prefix == NULL)
+        return fs->report.unknown++, MTDF_OK;
+    if (mtdf_j_is_acl(d->prefix) && d->name_len != 0)
+        return fs->report.bad_name++, MTDF_OK;
+    memset(&x, 0, sizeof(x));
+    status = mtdf_j_value_len(fs, j, d, &x.value_len);
+    if (status == MTDF_ERR_CORRUPT)
+        return MTDF_OK;
+    if (status == MTDF_OK)
+        status = mtdf_src_get(fs, d->pos + MTDF_J_XATTR_SIZE, d->name_len, NULL, &name);
+    if (status != MTDF_OK)
+        return status;
+    x.owner = (uint64_t)group + 1;
+    x.ref = at;
+    x.seq = r->xseqno;
+    x.deleted = r->xseqno & MTDF_J_XREF_DELETED;
+    return mtdf_xattr_add(fs, &x, prefix, (const char *)name, d->name_len);
+}
+
+static int mtdf_j_xattrs(mtdf_fs_t *fs, mtdf_jffs2_t *j)
+{
+    size_t i;
+    int status = mtdf_j_xdatums(fs, j);
+
+    for (i = 0; status == MTDF_OK && i < j->xrefs.len; i++)
+        status = mtdf_j_xref_take(fs, j, (const mtdf_jxref_t *)j->xrefs.data + i);
+    return status == MTDF_OK ? mtdf_xattr_finish(fs) : status;
+}
+
+static int mtdf_j_xattr(mtdf_fs_t *fs, const mtdf_xrec_t *x, uint8_t *buf)
+{
+    mtdf_jffs2_t *j = mtdf_j(fs);
+    const mtdf_jxdatum_t *d = (const mtdf_jxdatum_t *)j->xdatums.data + x->ref;
+    const uint8_t *value;
+    uint32_t len;
+    int status;
+
+    status = mtdf_src_get(fs, d->pos + MTDF_J_XATTR_SIZE + d->name_len + 1u, d->value_len, NULL, &value);
+    if (status != MTDF_OK)
+        return status;
+    if (!mtdf_j_is_acl(d->prefix)) {
+        memcpy(buf, value, x->value_len);
+        return MTDF_OK;
+    }
+    if (!mtdf_j_acl(value, d->value_len, j->big, buf, &len) || len != x->value_len)
+        return mtdf_fail(fs, MTDF_ERR_CORRUPT, "jffs2 acl changed while reading");
+    return MTDF_OK;
+}
+
 static int mtdf_j_build(mtdf_fs_t *fs, mtdf_jffs2_t *j)
 {
     uint32_t i;
@@ -916,9 +1196,8 @@ static int mtdf_j_build(mtdf_fs_t *fs, mtdf_jffs2_t *j)
         return status;
     mtdf_j_attributes(fs, j, MTDF_J_ROOT_INO, MTDF_S_IFDIR | 0755, mtdf_entry(fs, MTDF_ROOT));
     mtdf_entry(fs, MTDF_ROOT)->mode = MTDF_S_IFDIR | (mtdf_entry(fs, MTDF_ROOT)->mode & 07777);
-    mtdf_entry(fs, MTDF_ROOT)->ref = 0;
     mtdf_j_links_and_orphans(fs, j);
-    return MTDF_OK;
+    return mtdf_j_xattrs(fs, j);
 }
 
 static uint64_t mtdf_j_gcd(uint64_t a, uint64_t b)
@@ -985,11 +1264,13 @@ static void mtdf_j_destroy(mtdf_fs_t *fs)
     mtdf_vec_free(fs, &j->chain);
     mtdf_vec_free(fs, &j->perm);
     mtdf_vec_free(fs, &j->hits);
+    mtdf_vec_free(fs, &j->xdatums);
+    mtdf_vec_free(fs, &j->xrefs);
     mtdf_free(fs, j);
     fs->state = NULL;
 }
 
-static const mtdf_driver_t mtdf_jffs2_driver = {mtdf_j_read, mtdf_j_destroy};
+static const mtdf_driver_t mtdf_jffs2_driver = {mtdf_j_read, mtdf_j_destroy, mtdf_j_xattr};
 
 int mtdf_jffs2_open(mtdf_fs_t *fs, int forced)
 {
@@ -1018,5 +1299,6 @@ int mtdf_jffs2_open(mtdf_fs_t *fs, int forced)
     mtdf_vec_free(fs, &j->dirs);
     mtdf_vec_free(fs, &j->chain);
     mtdf_vec_free(fs, &j->cleanmarkers);
+    mtdf_vec_free(fs, &j->xrefs);
     return status;
 }

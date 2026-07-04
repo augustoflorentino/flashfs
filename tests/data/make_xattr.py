@@ -2,7 +2,7 @@
 
 fwtriage's writers keep no extended attributes, so these come from the
 oracles of each format, which copy them from the source tree: mkfs.ubifs
-always. Only user.* attributes can be set without privileges; the readers
+always, mkfs.jffs2 with --with-xattr. Only user.* attributes can be set without privileges; the readers
 treat every namespace alike.
 
     python3 tests/data/make_xattr.py tests/data
@@ -12,14 +12,17 @@ values and attributes.
 """
 
 import os
+import struct
 import subprocess
 import sys
 import tempfile
 
 BINARY = bytes(range(256)) * 2  # NULs included; mkfs.ubifs 2.3.1 fails near 1 KiB once a file has two attributes
+ACL = struct.pack("<I", 2) + b"".join(struct.pack("<HHI", tag, perm, uid) for tag, perm, uid in [
+    (0x01, 7, 0xFFFFFFFF), (0x02, 4, 1234), (0x04, 5, 0xFFFFFFFF), (0x10, 5, 0xFFFFFFFF), (0x20, 5, 0xFFFFFFFF)])
 ATTRS = {
     "/etc/passwd": [("user.color", b"blue"), ("user.empty", b""), ("user.binary", BINARY)],
-    "/etc": [("user.dir", b"d")],
+    "/etc": [("user.dir", b"d"), ("system.posix_acl_access", ACL), ("system.posix_acl_default", ACL)],
 }
 
 def build(root):
@@ -43,6 +46,8 @@ def main(out):
         build(tree)
         subprocess.run(["mkfs.ubifs", "-r", tree, "-o", os.path.join(out, "ubifs-xattr.img"), "-x", "none",
                         "-m", "512", "-e", "15872", "-c", "64"], check=True)
+        subprocess.run(["mkfs.jffs2", "-r", tree, "-o", os.path.join(out, "jffs2-xattr.img"), "--with-xattr",
+                        "-e", "8KiB", "-n"], check=True)
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:

@@ -187,6 +187,46 @@ typedef struct jb_inode {
     size_t payload_len;
 } jb_inode_t;
 
+TEST_UNUSED static void jb_xattr(buf_t *b, int big, uint32_t xid, uint32_t version, unsigned prefix, const char *name,
+                                 const void *value, size_t value_len)
+{
+    unsigned char node[32];
+    unsigned char data[512];
+    size_t name_len = strlen(name);
+    size_t len = name_len + 1 + value_len;
+
+    if (len > sizeof(data))
+        abort();
+    memcpy(data, name, name_len + 1);
+    if (value_len > 0)
+        memcpy(data + name_len + 1, value, value_len);
+    memset(node, 0, sizeof(node));
+    jb_header(node, 0xe008, (uint32_t)(32 + len), big);
+    jb_put32(node + 12, xid, big);
+    jb_put32(node + 16, version, big);
+    node[20] = (unsigned char)prefix;
+    node[21] = (unsigned char)name_len;
+    jb_put16(node + 22, (uint32_t)value_len, big);
+    jb_put32(node + 24, jb_crc(data, len), big);
+    jb_put32(node + 28, jb_crc(node, 28), big);
+    buf_put(b, node, 32);
+    buf_put(b, data, len);
+    jb_pad(b);
+}
+
+TEST_UNUSED static void jb_xref(buf_t *b, int big, uint32_t ino, uint32_t xid, uint32_t xseqno)
+{
+    unsigned char node[28];
+
+    memset(node, 0, sizeof(node));
+    jb_header(node, 0xe009, 28, big);
+    jb_put32(node + 12, ino, big);
+    jb_put32(node + 16, xid, big);
+    jb_put32(node + 20, xseqno, big);
+    jb_put32(node + 24, jb_crc(node, 24), big);
+    buf_put(b, node, 28);
+}
+
 TEST_UNUSED static size_t jb_inode(buf_t *b, int big, const jb_inode_t *in)
 {
     unsigned char node[68];
@@ -281,6 +321,21 @@ TEST_UNUSED static void counter_options(mtdf_options_t *opts, counter_t *c, long
     opts->alloc_ctx = c;
 }
 
+TEST_UNUSED static int walk_xattrs(mtdf_fs_t *fs, mtdf_ino_t ino, unsigned char *scratch, size_t scratch_len)
+{
+    mtdf_xattr_t x;
+    uint64_t cookie = 0;
+    size_t got;
+    int status;
+
+    while ((status = mtdf_listxattr(fs, ino, &cookie, &x)) == MTDF_OK) {
+        status = mtdf_getxattr(fs, ino, x.name, scratch, scratch_len, &got);
+        if (status != MTDF_OK)
+            return status;
+    }
+    return status == MTDF_END ? MTDF_OK : status;
+}
+
 TEST_UNUSED static int walk_all(mtdf_fs_t *fs, mtdf_ino_t dir, unsigned char *scratch, size_t scratch_len, uint64_t limit,
                     uint64_t *out_bytes)
 {
@@ -296,9 +351,10 @@ TEST_UNUSED static int walk_all(mtdf_fs_t *fs, mtdf_ino_t dir, unsigned char *sc
     while ((status = mtdf_readdir(fs, dir, &cookie, &e)) == MTDF_OK) {
         if ((status = mtdf_stat(fs, e.ino, &st)) != MTDF_OK)
             return status;
-        if (st.type == MTDF_TYPE_DIR)
+        status = walk_xattrs(fs, e.ino, scratch, scratch_len);
+        if (status == MTDF_OK && st.type == MTDF_TYPE_DIR)
             status = walk_all(fs, e.ino, scratch, scratch_len, limit, out_bytes);
-        else if (st.type == MTDF_TYPE_LINK)
+        else if (status == MTDF_OK && st.type == MTDF_TYPE_LINK)
             status = mtdf_readlink(fs, e.ino, target, sizeof(target), &got);
         for (off = 0; status == MTDF_OK && st.type == MTDF_TYPE_FILE && off < st.size && off < limit; off += got) {
             status = mtdf_read(fs, e.ino, off, scratch, scratch_len, &got);

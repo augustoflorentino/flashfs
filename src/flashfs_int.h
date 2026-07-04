@@ -60,9 +60,20 @@ typedef struct mtdf_vec {
     size_t cap;
 } mtdf_vec_t;
 
+typedef struct mtdf_xrec {
+    uint64_t owner;
+    uint64_t ref;
+    uint64_t seq;
+    uint32_t name_off;
+    uint32_t name_len;
+    uint32_t value_len;
+    uint32_t deleted;
+} mtdf_xrec_t;
+
 typedef struct mtdf_driver {
     int (*read)(mtdf_fs_t *fs, const mtdf_entry_t *entry, uint64_t offset, uint8_t *buf, size_t len);
     void (*destroy)(mtdf_fs_t *fs);
+    int (*xattr)(mtdf_fs_t *fs, const mtdf_xrec_t *x, uint8_t *buf);
 } mtdf_driver_t;
 
 struct mtdf_fs {
@@ -91,6 +102,8 @@ struct mtdf_fs {
     mtdf_vec_t entries;
     mtdf_vec_t names;
     uint32_t *children;
+    mtdf_vec_t xattrs;
+    mtdf_vec_t xnames;
 
     const mtdf_driver_t *driver;
     void *state;
@@ -181,6 +194,15 @@ MTDF_INTERN int mtdf_tree_add(mtdf_fs_t *fs, const char *name, size_t name_len, 
 MTDF_INTERN int mtdf_tree_finish(mtdf_fs_t *fs);
 MTDF_INTERN int mtdf_name_ok(const char *name, size_t name_len);
 MTDF_INTERN uint32_t mtdf_type_of(uint32_t mode);
+MTDF_INTERN int mtdf_xattr_add(mtdf_fs_t *fs, const mtdf_xrec_t *rec, const char *prefix, const char *name,
+                               size_t name_len);
+MTDF_INTERN int mtdf_xattr_finish(mtdf_fs_t *fs);
+MTDF_INTERN size_t mtdf_xattr_first(const mtdf_fs_t *fs, uint64_t owner);
+
+static inline mtdf_xrec_t *mtdf_xattr(const mtdf_fs_t *fs, size_t index)
+{
+    return (mtdf_xrec_t *)fs->xattrs.data + index;
+}
 
 static inline mtdf_entry_t *mtdf_entry(mtdf_fs_t *fs, uint32_t index)
 {

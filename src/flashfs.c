@@ -277,6 +277,8 @@ void mtdf_close(mtdf_fs_t *fs)
     mtdf_vec_free(fs, &fs->entries);
     mtdf_vec_free(fs, &fs->names);
     mtdf_free(fs, fs->children);
+    mtdf_vec_free(fs, &fs->xattrs);
+    mtdf_vec_free(fs, &fs->xnames);
     mtdf_free(fs, fs->unit);
     mtdf_free(fs, fs->window);
     fs->free_fn(fs->alloc_ctx, fs);
@@ -372,6 +374,65 @@ int mtdf_readlink(mtdf_fs_t *fs, mtdf_ino_t ino, char *buf, size_t buf_len, size
     *out_len = mtdf_strnlen(buf, *out_len);
     buf[*out_len] = '\0';
     return MTDF_OK;
+}
+
+int mtdf_listxattr(mtdf_fs_t *fs, mtdf_ino_t ino, uint64_t *cookie, mtdf_xattr_t *out_xattr)
+{
+    const mtdf_xrec_t *x;
+    mtdf_entry_t *entry;
+    size_t first;
+
+    if (cookie == NULL || out_xattr == NULL || mtdf_get_entry(fs, ino, &entry) != MTDF_OK)
+        return MTDF_ERR_ARG;
+    first = mtdf_xattr_first(fs, entry->ref);
+    if (*cookie >= fs->xattrs.len - first)
+        return MTDF_END;
+    x = mtdf_xattr(fs, first + (size_t)*cookie);
+    if (x->owner != entry->ref)
+        return MTDF_END;
+    memset(out_xattr, 0, sizeof(*out_xattr));
+    out_xattr->name = (const char *)fs->xnames.data + x->name_off;
+    out_xattr->name_len = x->name_len;
+    out_xattr->value_len = x->value_len;
+    (*cookie)++;
+    return MTDF_OK;
+}
+
+static const mtdf_xrec_t *mtdf_xattr_named(mtdf_fs_t *fs, const mtdf_entry_t *entry, const char *name)
+{
+    size_t len = strlen(name);
+    size_t i;
+
+    for (i = mtdf_xattr_first(fs, entry->ref); i < fs->xattrs.len && mtdf_xattr(fs, i)->owner == entry->ref; i++) {
+        if (mtdf_xattr(fs, i)->name_len == len &&
+            memcmp((const char *)fs->xnames.data + mtdf_xattr(fs, i)->name_off, name, len) == 0)
+            return mtdf_xattr(fs, i);
+    }
+    return NULL;
+}
+
+int mtdf_getxattr(mtdf_fs_t *fs, mtdf_ino_t ino, const char *name, void *buf, size_t buf_len, size_t *out_len)
+{
+    const mtdf_xrec_t *x;
+    mtdf_entry_t *entry;
+    int status;
+
+    if (out_len == NULL || name == NULL || (buf == NULL && buf_len > 0) || mtdf_get_entry(fs, ino, &entry) != MTDF_OK)
+        return MTDF_ERR_ARG;
+    *out_len = 0;
+    x = mtdf_xattr_named(fs, entry, name);
+    if (x == NULL)
+        return MTDF_ERR_NOENT;
+    if (buf_len < x->value_len) {
+        *out_len = x->value_len;
+        return MTDF_ERR_RANGE;
+    }
+    status = mtdf_charge(fs, x->value_len);
+    if (status == MTDF_OK && x->value_len > 0)
+        status = fs->driver->xattr(fs, x, buf);
+    if (status == MTDF_OK)
+        *out_len = x->value_len;
+    return status;
 }
 
 int mtdf_info(const mtdf_fs_t *fs, mtdf_info_t *out_info)

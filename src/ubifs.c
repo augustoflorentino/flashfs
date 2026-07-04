@@ -39,6 +39,7 @@
 #define MTDF_F_K_INO 0u
 #define MTDF_F_K_DATA 1u
 #define MTDF_F_K_DENT 2u
+#define MTDF_F_K_XENT 3u
 
 #define MTDF_F_FLG_AUTHENTICATION 0x20u
 #define MTDF_F_INO_XATTR 0x20u
@@ -53,6 +54,7 @@
 #define MTDF_F_TRUNC 1u
 #define MTDF_F_DATA 2u
 #define MTDF_F_DENTRY 3u
+#define MTDF_F_XENTRY 4u
 
 #define MTDF_F_NEW 0u
 #define MTDF_F_WALKING 1u
@@ -111,6 +113,7 @@ typedef struct mtdf_ubifs {
     mtdf_vec_t inodes;
     mtdf_vec_t data;
     mtdf_vec_t dents;
+    mtdf_vec_t xents;
     mtdf_vec_t stack;
     mtdf_vec_t buds;
     mtdf_vec_t chain;
@@ -343,6 +346,7 @@ static int mtdf_f_inode_rec(mtdf_fs_t *fs, const uint8_t *p, uint32_t len, mtdf_
         mtdf_le32(p + 112) > len - MTDF_F_INO_LEN)
         return fs->report.bad_structure++, MTDF_ERR_CORRUPT;
     rec->kind = MTDF_F_INODE;
+    rec->aux = mtdf_le32(p + 112);
     rec->a = mtdf_le32(p + 92);
     rec->b = mtdf_le32(p + 104);
     rec->c = mtdf_le32(p + 108);
@@ -358,12 +362,14 @@ static int mtdf_f_data_rec(mtdf_fs_t *fs, const uint8_t *p, uint32_t len, mtdf_f
     return MTDF_OK;
 }
 
-static int mtdf_f_dent_rec(mtdf_fs_t *fs, mtdf_ubifs_t *u, const uint8_t *p, uint32_t len, mtdf_frec_t *rec)
+static int mtdf_f_dent_rec(mtdf_fs_t *fs, mtdf_ubifs_t *u, const uint8_t *p, uint32_t len, mtdf_frec_t *rec,
+                           uint32_t kind)
 {
     uint32_t nlen = mtdf_le16(p + 50);
+    uint32_t key = kind == MTDF_F_DENTRY ? MTDF_F_K_DENT : MTDF_F_K_XENT;
     int status;
 
-    if (len < MTDF_F_DENT_LEN || mtdf_le32(p + 28) >> 29 != MTDF_F_K_DENT || nlen == 0 ||
+    if (len < MTDF_F_DENT_LEN || mtdf_le32(p + 28) >> 29 != key || nlen == 0 ||
         nlen >= len - MTDF_F_DENT_LEN || mtdf_le64(p + 40) > UINT32_MAX)
         return fs->report.bad_structure++, MTDF_ERR_CORRUPT;
     if (u->names.len > MTDF_NONE - nlen)
@@ -372,7 +378,7 @@ static int mtdf_f_dent_rec(mtdf_fs_t *fs, mtdf_ubifs_t *u, const uint8_t *p, uin
     if (status != MTDF_OK)
         return status;
     memcpy((uint8_t *)u->names.data + u->names.len, p + MTDF_F_DENT_LEN, nlen);
-    rec->kind = MTDF_F_DENTRY;
+    rec->kind = kind;
     rec->aux = mtdf_le64(p + 40);
     rec->a = (uint32_t)u->names.len;
     rec->b = nlen;
@@ -411,7 +417,10 @@ static int mtdf_f_take(mtdf_fs_t *fs, mtdf_ubifs_t *u, uint32_t lnum, uint32_t o
         status = mtdf_f_data_rec(fs, p, len, &rec);
         break;
     case MTDF_F_T_DENT:
-        status = mtdf_f_dent_rec(fs, u, p, len, &rec);
+        status = mtdf_f_dent_rec(fs, u, p, len, &rec, MTDF_F_DENTRY);
+        break;
+    case MTDF_F_T_XENT:
+        status = mtdf_f_dent_rec(fs, u, p, len, &rec, MTDF_F_XENTRY);
         break;
     case MTDF_F_T_TRUN:
         status = mtdf_f_trun_rec(fs, p, len, &rec);
@@ -622,6 +631,11 @@ static int mtdf_f_name_order(const mtdf_ubifs_t *u, const mtdf_frec_t *a, const 
     return a->b < b->b ? -1 : a->b > b->b;
 }
 
+static int mtdf_f_named(uint32_t kind)
+{
+    return kind == MTDF_F_DENTRY || kind == MTDF_F_XENTRY;
+}
+
 static int mtdf_f_order(const void *ctx, const void *pa, const void *pb)
 {
     const mtdf_frec_t *a = pa;
@@ -634,7 +648,7 @@ static int mtdf_f_order(const void *ctx, const void *pa, const void *pb)
         return a->kind < b->kind ? -1 : 1;
     if (a->kind == MTDF_F_DATA && a->aux != b->aux)
         return a->aux < b->aux ? -1 : 1;
-    if (a->kind == MTDF_F_DENTRY && (order = mtdf_f_name_order(ctx, a, b)) != 0)
+    if (mtdf_f_named(a->kind) && (order = mtdf_f_name_order(ctx, a, b)) != 0)
         return order;
     return (a->sqnum > b->sqnum) - (a->sqnum < b->sqnum);
 }
@@ -648,7 +662,7 @@ static size_t mtdf_f_key_end(const mtdf_ubifs_t *u, size_t first, size_t end)
     while (i + 1 < end) {
         b = mtdf_f_rec(u, (uint32_t)(i + 1));
         if (b->kind != a->kind || (a->kind == MTDF_F_DATA && b->aux != a->aux) ||
-            (a->kind == MTDF_F_DENTRY && mtdf_f_name_order(u, a, b) != 0))
+            (mtdf_f_named(a->kind) && mtdf_f_name_order(u, a, b) != 0))
             break;
         i++;
     }
@@ -737,6 +751,10 @@ static int mtdf_f_contents(mtdf_fs_t *fs, mtdf_ubifs_t *u, size_t i, size_t end,
         if (mtdf_f_rec(u, (uint32_t)last)->kind == MTDF_F_DENTRY) {
             if (mtdf_f_rec(u, (uint32_t)last)->aux != 0)
                 status = mtdf_f_live_dent(fs, u, (uint32_t)last);
+        } else if (mtdf_f_rec(u, (uint32_t)last)->kind == MTDF_F_XENTRY) {
+            lost += live == MTDF_NONE;
+            if (live != MTDF_NONE && mtdf_f_rec(u, (uint32_t)last)->aux != 0)
+                status = mtdf_f_push32(fs, &u->xents, (uint32_t)last);
         } else if (!mtdf_f_truncated(u, trun, i, mtdf_f_rec(u, (uint32_t)last))) {
             lost += live == MTDF_NONE;
             if (live != MTDF_NONE && (status = mtdf_f_push32(fs, &u->data, (uint32_t)last)) == MTDF_OK)
@@ -960,6 +978,33 @@ static int mtdf_f_finish(mtdf_fs_t *fs, mtdf_ubifs_t *u)
     return status;
 }
 
+static int mtdf_f_xattrs(mtdf_fs_t *fs, mtdf_ubifs_t *u)
+{
+    const mtdf_frec_t *rec;
+    const mtdf_frec_t *target;
+    mtdf_xrec_t x;
+    uint32_t at;
+    uint32_t i;
+    int status = MTDF_OK;
+
+    memset(&x, 0, sizeof(x));
+    for (i = 0; i < u->xents.len && status == MTDF_OK; i++) {
+        rec = mtdf_f_rec(u, ((uint32_t *)u->xents.data)[i]);
+        at = mtdf_f_find(u, rec->aux);
+        target = at == MTDF_NONE ? NULL : mtdf_f_rec(u, mtdf_f_ino(u, at)->rec);
+        if (target == NULL || !(target->c & MTDF_F_INO_XATTR)) {
+            fs->report.bad_structure++;
+            continue;
+        }
+        x.owner = mtdf_f_find(u, rec->inum);
+        x.ref = at;
+        x.seq = rec->sqnum;
+        x.value_len = (uint32_t)target->aux;
+        status = mtdf_xattr_add(fs, &x, "", (const char *)u->names.data + rec->a, rec->b);
+    }
+    return status == MTDF_OK ? mtdf_xattr_finish(fs) : status;
+}
+
 static int mtdf_f_build(mtdf_fs_t *fs, mtdf_ubifs_t *u)
 {
     uint32_t i;
@@ -971,6 +1016,8 @@ static int mtdf_f_build(mtdf_fs_t *fs, mtdf_ubifs_t *u)
         status = mtdf_f_resolve(fs, u, i);
     if (status == MTDF_OK)
         status = mtdf_f_place(fs, u);
+    if (status == MTDF_OK)
+        status = mtdf_f_xattrs(fs, u);
     return status == MTDF_OK ? mtdf_f_finish(fs, u) : status;
 }
 
@@ -1080,6 +1127,23 @@ static int mtdf_f_link(mtdf_fs_t *fs, mtdf_ubifs_t *u, const mtdf_fino_t *ino, u
     return MTDF_OK;
 }
 
+static int mtdf_f_xattr(mtdf_fs_t *fs, const mtdf_xrec_t *x, uint8_t *buf)
+{
+    mtdf_ubifs_t *u = mtdf_f(fs);
+    const mtdf_frec_t *rec = mtdf_f_rec(u, mtdf_f_ino(u, (uint32_t)x->ref)->rec);
+    const uint8_t *p;
+    uint32_t len;
+    int status;
+
+    status = mtdf_f_node(fs, u, rec->lnum, rec->offs, 0, &p, &len);
+    if (status != MTDF_OK)
+        return status;
+    if (len < MTDF_F_INO_LEN || mtdf_le32(p + 112) != x->value_len || x->value_len > len - MTDF_F_INO_LEN)
+        return mtdf_fail(fs, MTDF_ERR_CORRUPT, "ubifs xattr inode changed while reading");
+    memcpy(buf, p + MTDF_F_INO_LEN, x->value_len);
+    return MTDF_OK;
+}
+
 static int mtdf_f_read(mtdf_fs_t *fs, const mtdf_entry_t *entry, uint64_t off, uint8_t *buf, size_t len)
 {
     mtdf_ubifs_t *u = mtdf_f(fs);
@@ -1111,6 +1175,7 @@ static void mtdf_f_release(mtdf_fs_t *fs, mtdf_ubifs_t *u)
 {
     mtdf_vec_free(fs, &u->names);
     mtdf_vec_free(fs, &u->dents);
+    mtdf_vec_free(fs, &u->xents);
     mtdf_vec_free(fs, &u->stack);
     mtdf_vec_free(fs, &u->buds);
     mtdf_vec_free(fs, &u->chain);
@@ -1128,7 +1193,7 @@ static void mtdf_f_destroy(mtdf_fs_t *fs)
     fs->state = NULL;
 }
 
-static const mtdf_driver_t mtdf_ubifs_driver = {mtdf_f_read, mtdf_f_destroy};
+static const mtdf_driver_t mtdf_ubifs_driver = {mtdf_f_read, mtdf_f_destroy, mtdf_f_xattr};
 
 int mtdf_ubifs_open(mtdf_fs_t *fs, int forced)
 {

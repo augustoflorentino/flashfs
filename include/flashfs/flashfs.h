@@ -62,6 +62,7 @@ extern "C" {
 
 #define MTDF_ROOT 0u
 #define MTDF_PATH_MAX 4096
+#define MTDF_XATTR_NAME_MAX 255
 #define MTDF_SYMLINK_MAX 40
 
 typedef uint32_t mtdf_ino_t;
@@ -105,6 +106,13 @@ typedef struct mtdf_dirent {
     uint32_t type;
     uint32_t reserved[2];
 } mtdf_dirent_t;
+
+typedef struct mtdf_xattr {
+    const char *name;
+    size_t name_len;
+    size_t value_len;
+    uint32_t reserved[2];
+} mtdf_xattr_t;
 
 typedef struct mtdf_info {
     uint32_t format;
@@ -152,6 +160,11 @@ MTDF_API int mtdf_readdir(mtdf_fs_t *fs, mtdf_ino_t dir, uint64_t *cookie, mtdf_
 MTDF_API int mtdf_read(mtdf_fs_t *fs, mtdf_ino_t ino, uint64_t offset, void *buf, size_t buf_len, size_t *out_read);
 
 MTDF_API int mtdf_readlink(mtdf_fs_t *fs, mtdf_ino_t ino, char *buf, size_t buf_len, size_t *out_len);
+
+MTDF_API int mtdf_listxattr(mtdf_fs_t *fs, mtdf_ino_t ino, uint64_t *cookie, mtdf_xattr_t *out_xattr);
+
+MTDF_API int mtdf_getxattr(mtdf_fs_t *fs, mtdf_ino_t ino, const char *name, void *buf, size_t buf_len,
+                           size_t *out_len);
 
 MTDF_API int mtdf_info(const mtdf_fs_t *fs, mtdf_info_t *out_info);
 MTDF_API int mtdf_report(const mtdf_fs_t *fs, mtdf_report_t *out_report);

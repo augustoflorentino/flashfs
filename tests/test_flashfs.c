@@ -288,25 +288,6 @@ static void test_ubi_small_leb(void)
     buf_free(&b);
 }
 
-static void test_ubifs_xattr_index(void)
-{
-    mtdf_report_t r;
-    mtdf_fs_t *fs;
-    buf_t b = {0};
-
-    if (open_image(&b, "ubifs-xattr.img", &fs) != MTDF_OK) {
-        printf("ubifs-xattr.img does not open\n");
-        test_failures++;
-        buf_free(&b);
-        return;
-    }
-    CHECK_EQ(mtdf_report(fs, &r), MTDF_OK);
-    CHECK_EQ(r.bad_header + r.bad_node_crc + r.bad_structure + r.orphans, 0);
-    CHECK_EQ(r.unknown, 4);
-    mtdf_close(fs);
-    buf_free(&b);
-}
-
 static void test_regressions(void)
 {
     static const char *names[] = {"regress-cramfs-empty-span.img", "regress-cramfs-shared-ref.img"};
@@ -812,6 +793,192 @@ static void test_ubifs_journal(void)
     buf_free(&b);
 }
 
+static const unsigned char acl_posix[44] = {2, 0, 0, 0,    1,    0,    7,    0,    0xff, 0xff, 0xff,
+                                            0xff, 2, 0, 4, 0, 0xd2, 4,    0,    0,    4,    0,
+                                            5, 0, 0xff, 0xff, 0xff, 0xff, 0x10, 0,    5,    0,    0xff,
+                                            0xff, 0xff, 0xff, 0x20, 0, 5,    0,    0xff, 0xff, 0xff, 0xff};
+
+static void xattr_names(mtdf_fs_t *fs, mtdf_ino_t ino, char *out, size_t out_len)
+{
+    mtdf_xattr_t x;
+    uint64_t cookie = 0;
+    size_t at = 0;
+
+    out[0] = '\0';
+    while (mtdf_listxattr(fs, ino, &cookie, &x) == MTDF_OK && at + x.name_len + 2 < out_len) {
+        CHECK_EQ(strlen(x.name), x.name_len);
+        at += (size_t)sprintf(out + at, "%s%s", at > 0 ? " " : "", x.name);
+    }
+}
+
+static void check_xattr(mtdf_fs_t *fs, const char *path, const char *name, const void *want, size_t want_len)
+{
+    unsigned char value[1024];
+    mtdf_ino_t ino;
+    size_t len = 99;
+
+    CHECK_EQ(mtdf_lookup(fs, path, 0, &ino), MTDF_OK);
+    CHECK_EQ(mtdf_getxattr(fs, ino, name, value, sizeof(value), &len), MTDF_OK);
+    CHECK(len == want_len && memcmp(value, want, want_len) == 0);
+}
+
+static void check_xattr_tree(mtdf_fs_t *fs)
+{
+    unsigned char binary[512];
+    char names[200];
+    mtdf_ino_t ino;
+    size_t len;
+    size_t i;
+
+    for (i = 0; i < sizeof(binary); i++)
+        binary[i] = (unsigned char)i;
+    CHECK_EQ(mtdf_lookup(fs, "/etc", 0, &ino), MTDF_OK);
+    xattr_names(fs, ino, names, sizeof(names));
+    CHECK(strcmp(names, "system.posix_acl_access system.posix_acl_default user.dir") == 0);
+    CHECK_EQ(mtdf_lookup(fs, "/etc/passwd-", 0, &ino), MTDF_OK);
+    xattr_names(fs, ino, names, sizeof(names));
+    CHECK(strcmp(names, "user.binary user.color user.empty") == 0);
+    xattr_names(fs, MTDF_ROOT, names, sizeof(names));
+    CHECK(names[0] == '\0');
+    CHECK_EQ(mtdf_lookup(fs, "/plain", 0, &ino), MTDF_OK);
+    xattr_names(fs, ino, names, sizeof(names));
+    CHECK(names[0] == '\0');
+    check_xattr(fs, "/etc", "system.posix_acl_access", acl_posix, sizeof(acl_posix));
+    check_xattr(fs, "/etc", "system.posix_acl_default", acl_posix, sizeof(acl_posix));
+    check_xattr(fs, "/etc", "user.dir", "d", 1);
+    check_xattr(fs, "/etc/passwd", "user.color", "blue", 4);
+    check_xattr(fs, "/etc/passwd-", "user.binary", binary, sizeof(binary));
+    check_xattr(fs, "/etc/passwd", "user.empty", "", 0);
+
+    CHECK_EQ(mtdf_lookup(fs, "/etc/passwd", 0, &ino), MTDF_OK);
+    CHECK_EQ(mtdf_getxattr(fs, ino, "user.color", NULL, 0, &len), MTDF_ERR_RANGE);
+    CHECK_EQ(len, 4);
+    CHECK_EQ(mtdf_getxattr(fs, ino, "user.color", names, 3, &len), MTDF_ERR_RANGE);
+    CHECK_EQ(len, 4);
+    CHECK_EQ(mtdf_getxattr(fs, ino, "user.empty", NULL, 0, &len), MTDF_OK);
+    CHECK_EQ(len, 0);
+    CHECK_EQ(mtdf_getxattr(fs, ino, "user.colo", names, sizeof(names), &len), MTDF_ERR_NOENT);
+    CHECK_EQ(mtdf_getxattr(fs, ino, "user.colors", names, sizeof(names), &len), MTDF_ERR_NOENT);
+    CHECK_EQ(len, 0);
+}
+
+static void test_xattr_images(void)
+{
+    static const char *const images[] = {"ubifs-xattr.img", "jffs2-xattr.img"};
+    mtdf_report_t r;
+    mtdf_xattr_t x;
+    uint64_t cookie = 0;
+    mtdf_fs_t *fs;
+    size_t len;
+    size_t i;
+    buf_t b = {0};
+
+    for (i = 0; i < 2; i++) {
+        if (open_image(&b, images[i], &fs) != MTDF_OK) {
+            printf("%s does not open\n", images[i]);
+            test_failures++;
+            continue;
+        }
+        check_xattr_tree(fs);
+        CHECK_EQ(mtdf_report(fs, &r), MTDF_OK);
+        CHECK_EQ(r.bad_header + r.bad_node_crc + r.bad_data_crc + r.bad_structure + r.bad_name + r.orphans, 0);
+        CHECK_EQ(r.unknown, 0);
+        CHECK_EQ(r.superseded, i == 1 ? 3 : 0);
+        CHECK_EQ(mtdf_listxattr(fs, MTDF_ROOT, NULL, &x), MTDF_ERR_ARG);
+        CHECK_EQ(mtdf_listxattr(fs, MTDF_ROOT, &cookie, NULL), MTDF_ERR_ARG);
+        CHECK_EQ(mtdf_listxattr(fs, 999, &cookie, &x), MTDF_ERR_ARG);
+        CHECK_EQ(mtdf_getxattr(fs, MTDF_ROOT, NULL, NULL, 0, &len), MTDF_ERR_ARG);
+        CHECK_EQ(mtdf_getxattr(fs, MTDF_ROOT, "user.a", NULL, 0, NULL), MTDF_ERR_ARG);
+        CHECK_EQ(mtdf_getxattr(fs, MTDF_ROOT, "user.a", NULL, 1, &len), MTDF_ERR_ARG);
+        mtdf_close(fs);
+        buf_free(&b);
+    }
+    fs = NULL;
+    CHECK_EQ(open_image(&b, "cramfs-le.img", &fs), MTDF_OK);
+    if (fs != NULL) {
+        cookie = 0;
+        CHECK_EQ(mtdf_listxattr(fs, MTDF_ROOT, &cookie, &x), MTDF_END);
+        CHECK_EQ(mtdf_getxattr(fs, MTDF_ROOT, "user.a", NULL, 0, &len), MTDF_ERR_NOENT);
+        mtdf_close(fs);
+    }
+    buf_free(&b);
+}
+
+static size_t jffs2_acl(unsigned char *out, int big)
+{
+    static const unsigned short entries[][3] = {{1, 6, 0}, {2, 4, 1000}, {4, 4, 0}, {0x10, 4, 0}, {0x20, 0, 0}};
+    size_t at = 4;
+    size_t i;
+
+    jb_put32(out, 1, big);
+    for (i = 0; i < 5; i++) {
+        jb_put16(out + at, entries[i][0], big);
+        jb_put16(out + at + 2, entries[i][1], big);
+        at += 4;
+        if (entries[i][0] == 2) {
+            jb_put32(out + at, entries[i][2], big);
+            at += 4;
+        }
+    }
+    return at;
+}
+
+static void test_jffs2_xattr_log(void)
+{
+    static const unsigned char acl_want[44] = {2, 0, 0,    0,    1,    0,    6,    0,    0xff, 0xff, 0xff,
+                                               0xff, 2, 0,    4,    0,    0xe8, 3,    0,    0,    4,    0,
+                                               4, 0, 0xff, 0xff, 0xff, 0xff, 0x10, 0,    4,    0,    0xff,
+                                               0xff, 0xff, 0xff, 0x20, 0,    0,    0,    0xff, 0xff, 0xff, 0xff};
+    unsigned char acl[64];
+    unsigned char bad[4];
+    char names[200];
+    mtdf_report_t r;
+    mtdf_ino_t ino;
+    mtdf_fs_t *fs;
+    buf_t b = {0};
+    int big;
+
+    for (big = 0; big < 2; big++) {
+        b.len = 0;
+        jb_cleanmarker(&b, big);
+        jb_dirent(&b, big, 1, 2, 1, "f", JB_DT_REG);
+        jb_file(&b, big, 2, 0100644, "x", 1);
+        jb_xattr(&b, big, 1, 1, 1, "a", "1", 1);
+        jb_xattr(&b, big, 1, 2, 1, "a", "2", 1);
+        jb_xref(&b, big, 2, 1, 2);
+        jb_xattr(&b, big, 2, 1, 1, "b", "x", 1);
+        jb_xref(&b, big, 2, 2, 4);
+        jb_xref(&b, big, 2, 2, 7);
+        jb_xattr(&b, big, 3, 0xffffffffu, 1, "", "", 0);
+        jb_xref(&b, big, 2, 3, 8);
+        jb_xattr(&b, big, 4, 1, 2, "selinux", "ctx", 3);
+        jb_xref(&b, big, 2, 4, 10);
+        jb_xref(&b, big, 2, 9, 12);
+        jb_xattr(&b, big, 5, 1, 9, "z", "", 0);
+        jb_xref(&b, big, 2, 5, 14);
+        jb_xattr(&b, big, 6, 1, 3, "", acl, jffs2_acl(acl, big));
+        jb_xref(&b, big, 2, 6, 16);
+        jb_put32(bad, 2, big);
+        jb_xattr(&b, big, 7, 1, 4, "", bad, 4);
+        jb_xref(&b, big, 2, 7, 18);
+
+        CHECK_EQ(mtdf_open_mem(b.data, b.len, NULL, &fs), MTDF_OK);
+        CHECK_EQ(mtdf_lookup(fs, "/f", 0, &ino), MTDF_OK);
+        xattr_names(fs, ino, names, sizeof(names));
+        CHECK(strcmp(names, "security.selinux system.posix_acl_access user.a") == 0);
+        check_xattr(fs, "/f", "user.a", "2", 1);
+        check_xattr(fs, "/f", "security.selinux", "ctx", 3);
+        check_xattr(fs, "/f", "system.posix_acl_access", acl_want, sizeof(acl_want));
+        CHECK_EQ(mtdf_report(fs, &r), MTDF_OK);
+        CHECK_EQ(r.superseded, 3);
+        CHECK_EQ(r.orphans, 1);
+        CHECK_EQ(r.unknown, 1);
+        CHECK_EQ(r.bad_structure, 1);
+        mtdf_close(fs);
+    }
+    buf_free(&b);
+}
+
 static void test_open_file(void)
 {
     static const buf_t nothing = {0};
@@ -972,7 +1139,8 @@ int main(int argc, char **argv)
     test_without_codecs();
     test_regressions();
     test_ubi_small_leb();
-    test_ubifs_xattr_index();
+    test_xattr_images();
+    test_jffs2_xattr_log();
     test_ubifs_journal();
     test_ubifs_refusals();
     test_open_file();

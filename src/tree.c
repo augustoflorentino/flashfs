@@ -357,3 +357,103 @@ int mtdf_readdir(mtdf_fs_t *fs, mtdf_ino_t dir, uint64_t *cookie, mtdf_dirent_t 
     (*cookie)++;
     return MTDF_OK;
 }
+
+int mtdf_xattr_add(mtdf_fs_t *fs, const mtdf_xrec_t *rec, const char *prefix, const char *name, size_t name_len)
+{
+    size_t prefix_len = strlen(prefix);
+    size_t len = prefix_len + name_len;
+    char *at;
+    mtdf_xrec_t *x;
+    int status;
+
+    if (len == 0 || len > MTDF_XATTR_NAME_MAX || memchr(name, 0, name_len) != NULL)
+        return fs->report.bad_name++, MTDF_OK;
+    if (fs->xnames.len + len + 1 >= MTDF_NONE)
+        return mtdf_fail(fs, MTDF_ERR_BUDGET, "xattr names larger than the index can address");
+    status = mtdf_count(fs, 1);
+    if (status == MTDF_OK)
+        status = mtdf_vec_grow(fs, &fs->xattrs, sizeof(mtdf_xrec_t), 1);
+    if (status == MTDF_OK)
+        status = mtdf_vec_grow(fs, &fs->xnames, 1, len + 1);
+    if (status != MTDF_OK)
+        return status;
+    x = mtdf_xattr(fs, fs->xattrs.len++);
+    *x = *rec;
+    x->name_off = (uint32_t)fs->xnames.len;
+    x->name_len = (uint32_t)len;
+    at = (char *)fs->xnames.data + fs->xnames.len;
+    memcpy(at, prefix, prefix_len);
+    if (name_len > 0)
+        memcpy(at + prefix_len, name, name_len);
+    at[len] = '\0';
+    fs->xnames.len += len + 1;
+    return MTDF_OK;
+}
+
+static int mtdf_xattr_name_order(const mtdf_fs_t *fs, const mtdf_xrec_t *a, const mtdf_xrec_t *b)
+{
+    const char *names = fs->xnames.data;
+    uint32_t common = a->name_len < b->name_len ? a->name_len : b->name_len;
+    int order = memcmp(names + a->name_off, names + b->name_off, common);
+
+    if (order != 0)
+        return order;
+    return a->name_len < b->name_len ? -1 : a->name_len > b->name_len;
+}
+
+static int mtdf_by_owner_name_seq(const void *ctx, const void *pa, const void *pb)
+{
+    const mtdf_xrec_t *a = pa;
+    const mtdf_xrec_t *b = pb;
+    int order;
+
+    if (a->owner != b->owner)
+        return a->owner < b->owner ? -1 : 1;
+    order = mtdf_xattr_name_order(ctx, a, b);
+    if (order != 0)
+        return order;
+    return (a->seq > b->seq) - (a->seq < b->seq);
+}
+
+int mtdf_xattr_finish(mtdf_fs_t *fs)
+{
+    size_t count = fs->xattrs.len;
+    mtdf_xrec_t *tmp;
+    size_t kept = 0;
+    size_t i;
+
+    if (count == 0)
+        return MTDF_OK;
+    if (count > SIZE_MAX / sizeof(mtdf_xrec_t))
+        return MTDF_ERR_NOMEM;
+    tmp = mtdf_alloc(fs, count * sizeof(mtdf_xrec_t));
+    if (tmp == NULL)
+        return MTDF_ERR_NOMEM;
+    mtdf_sort(fs->xattrs.data, tmp, count, sizeof(mtdf_xrec_t), mtdf_by_owner_name_seq, fs);
+    mtdf_free(fs, tmp);
+    for (i = 0; i < count; i++) {
+        if (i + 1 < count && mtdf_xattr(fs, i)->owner == mtdf_xattr(fs, i + 1)->owner &&
+            mtdf_xattr_name_order(fs, mtdf_xattr(fs, i), mtdf_xattr(fs, i + 1)) == 0)
+            fs->report.superseded++;
+        else if (!mtdf_xattr(fs, i)->deleted)
+            *mtdf_xattr(fs, kept++) = *mtdf_xattr(fs, i);
+    }
+    fs->xattrs.len = kept;
+    return MTDF_OK;
+}
+
+size_t mtdf_xattr_first(const mtdf_fs_t *fs, uint64_t owner)
+{
+    size_t lo = 0;
+    size_t hi = fs->xattrs.len;
+    size_t mid;
+
+    while (lo < hi) {
+        mid = lo + (hi - lo) / 2;
+        if (mtdf_xattr(fs, mid)->owner < owner)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo;
+}

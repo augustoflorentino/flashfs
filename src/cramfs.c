@@ -389,7 +389,7 @@ static void mtdf_c_destroy(mtdf_fs_t *fs)
     fs->state = NULL;
 }
 
-static const mtdf_driver_t mtdf_cramfs_driver = {mtdf_c_read, mtdf_c_destroy};
+static const mtdf_driver_t mtdf_cramfs_driver = {mtdf_c_read, mtdf_c_destroy, NULL};
 
 int mtdf_cramfs_open(mtdf_fs_t *fs, int forced)
 {

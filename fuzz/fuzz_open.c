@@ -66,6 +66,23 @@ static void read_file(mtdf_fs_t *fs, mtdf_ino_t ino, uint64_t size, uint64_t *h)
     }
 }
 
+static void read_xattrs(mtdf_fs_t *fs, mtdf_ino_t ino, uint64_t *h)
+{
+    static unsigned char value[1 << 16];
+    mtdf_xattr_t x;
+    uint64_t cookie = 0;
+    size_t got;
+    int status;
+
+    while ((status = mtdf_listxattr(fs, ino, &cookie, &x)) == MTDF_OK) {
+        mix(h, x.name, x.name_len);
+        status = mtdf_getxattr(fs, ino, x.name, value, sizeof(value), &got);
+        mix_status(h, status);
+        mix(h, value, status == MTDF_OK ? got : 0);
+    }
+    mix_status(h, status);
+}
+
 static void walk(mtdf_fs_t *fs, mtdf_ino_t dir, unsigned depth, uint64_t *h)
 {
     char target[MTDF_PATH_MAX + 1];
@@ -84,6 +101,7 @@ static void walk(mtdf_fs_t *fs, mtdf_ino_t dir, unsigned depth, uint64_t *h)
             return;
         mix(h, &st.size, sizeof(st.size));
         mix(h, &st.mode, sizeof(st.mode));
+        read_xattrs(fs, e.ino, h);
         if (st.type == MTDF_TYPE_DIR && depth < 64)
             walk(fs, e.ino, depth + 1, h);
         if (st.type == MTDF_TYPE_LINK && (status = mtdf_readlink(fs, e.ino, target, sizeof(target), &got)) == MTDF_OK) {
@@ -119,6 +137,7 @@ static uint64_t read_all(input_t *in, int callback)
         return h;
     mtdf_report(fs, &report);
     mix(&h, &report, sizeof(report));
+    read_xattrs(fs, MTDF_ROOT, &h);
     walk(fs, MTDF_ROOT, 0, &h);
     mtdf_close(fs);
     return h;

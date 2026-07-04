@@ -553,7 +553,7 @@ static void mtdf_u_destroy(mtdf_fs_t *fs)
     fs->state = NULL;
 }
 
-static const mtdf_driver_t mtdf_ubi_driver = {mtdf_u_read, mtdf_u_destroy};
+static const mtdf_driver_t mtdf_ubi_driver = {mtdf_u_read, mtdf_u_destroy, NULL};
 
 static int mtdf_u_build(mtdf_fs_t *fs, mtdf_ubi_t *u)
 {
