@@ -84,6 +84,19 @@ if (mtdf_open_mem(image, image_len, NULL, &ubi) == MTDF_OK &&
 mtdf_close(ubi);
 ```
 
+Extended attributes (JFFS2 and UBIFS) list like a directory and read by name:
+
+```c
+mtdf_xattr_t x;
+uint64_t cookie = 0;
+unsigned char value[256];
+size_t len;
+
+while (mtdf_listxattr(fs, ino, &cookie, &x) == MTDF_OK)
+    if (mtdf_getxattr(fs, ino, x.name, value, sizeof(value), &len) == MTDF_OK)
+        printf("%s: %zu bytes\n", x.name, len);
+```
+
 [`examples/mtdf-ls.c`](examples/mtdf-ls.c) lists an image read through a callback;
 [`examples/mtdf-extract.c`](examples/mtdf-extract.c) extracts it into a new directory without
 writing outside it. The header `include/flashfs/flashfs.h` is the API reference.
@@ -118,7 +131,8 @@ inflating the JFFS2 image's 6247 zlib nodes alone takes 86 ms (`bench/zlib_floor
 ## Versioning
 
 Semantic Versioning. Compatible releases bump the minor version; incompatible ones bump the
-major version and the soname. See [CHANGELOG.md](CHANGELOG.md).
+major version and the soname. The library is in 0.x until 1.0.0 can be checked where it is
+published: CI on every platform, an ABI baseline, packages. See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

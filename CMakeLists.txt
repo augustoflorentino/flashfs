@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(flashfs VERSION 0.2.0 DESCRIPTION "Read-only reader for embedded flash filesystems: JFFS2, cramfs, UBI and UBIFS" LANGUAGES C)
+project(flashfs VERSION 0.4.0 DESCRIPTION "Read-only reader for embedded flash filesystems: JFFS2, cramfs, UBI and UBIFS" LANGUAGES C)
 
 option(FLASHFS_BUILD_TESTS "Build tests" OFF)
 option(FLASHFS_BUILD_EXAMPLES "Build examples" OFF)

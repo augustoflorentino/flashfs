@@ -4,6 +4,28 @@ Each release lists what changed, what updating means for existing code, and ever
 
 ## Unreleased
 
+## 0.4.0 - 2026-07-03
+
+- Extended attributes: `mtdf_listxattr` iterates an entry's attributes in byte order of names,
+  `mtdf_getxattr` reads one by name (`MTDF_ERR_RANGE` with the length when the buffer is short).
+  UBIFS: xattr entries and inodes, journal included. JFFS2: xattr datums and references, newest
+  version and sequence number winning, removals honoured; POSIX ACLs come in the kernel's xattr
+  format, converted from JFFS2's.
+- `mtdf_open_file` opens the image stored in a regular file of another handle, such as the UBIFS
+  in a UBI volume, without a hand-written callback.
+- Fixed: UBIFS images with extended attributes reported one `bad_structure` per xattr entry of the
+  index, on healthy images.
+- Fixed: a UBI image whose erase block holds fewer than 128 volume table records (16 KiB erase
+  blocks) reported the missing slots as `bad_structure`.
+
+Updating: no function or structure changed. The new functions add to the API; `mtdf_xattr_t` is a
+new type. Reports of JFFS2 and UBIFS images with attributes change: the nodes are read, not counted
+in `unknown`, and replaced ones count in `superseded`.
+
+Version: the release after 0.2.0 is 0.4.0. The library stays in 0.x: nothing so far breaks the
+ABI, and 1.0.0 waits for what only publishing can check (CI on every platform, an ABI baseline,
+packages).
+
 ## 0.2.0 - 2026-06-15
 
 - Reads UBIFS (`MTDF_FORMAT_UBIFS`): the superblock, the newer master node, the committed index, and
