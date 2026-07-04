@@ -401,7 +401,7 @@ static int mtdf_f_take(mtdf_fs_t *fs, mtdf_ubifs_t *u, uint32_t lnum, uint32_t o
     rec.lnum = lnum;
     rec.offs = offs;
     rec.len = len;
-    if (key != NULL && (p[20] > MTDF_F_T_DENT || memcmp(p + 24, key, 8) != 0))
+    if (key != NULL && (p[20] > MTDF_F_T_XENT || memcmp(p + 24, key, 8) != 0))
         return fs->report.bad_structure++, MTDF_OK;
     switch (p[20]) {
     case MTDF_F_T_INO:

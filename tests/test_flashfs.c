@@ -288,6 +288,25 @@ static void test_ubi_small_leb(void)
     buf_free(&b);
 }
 
+static void test_ubifs_xattr_index(void)
+{
+    mtdf_report_t r;
+    mtdf_fs_t *fs;
+    buf_t b = {0};
+
+    if (open_image(&b, "ubifs-xattr.img", &fs) != MTDF_OK) {
+        printf("ubifs-xattr.img does not open\n");
+        test_failures++;
+        buf_free(&b);
+        return;
+    }
+    CHECK_EQ(mtdf_report(fs, &r), MTDF_OK);
+    CHECK_EQ(r.bad_header + r.bad_node_crc + r.bad_structure + r.orphans, 0);
+    CHECK_EQ(r.unknown, 4);
+    mtdf_close(fs);
+    buf_free(&b);
+}
+
 static void test_regressions(void)
 {
     static const char *names[] = {"regress-cramfs-empty-span.img", "regress-cramfs-shared-ref.img"};
@@ -914,7 +933,7 @@ static void test_without_codecs(void)
         {"cramfs-le.img", MTDF_FEATURE_ZLIB},     {"jffs2-le-rtime.img", 0},
         {"jffs2-be-none.img", 0},                 {"ubi.img", 0},
         {"ubifs-lzo.img", MTDF_FEATURE_LZO},      {"small-ubifs-zstd.img", MTDF_FEATURE_ZSTD},
-        {"ubifs-journal.img", 0},
+        {"ubifs-journal.img", 0},              {"ubifs-xattr.img", 0},
     };
     static unsigned char scratch[65536];
     unsigned features = mtdf_features();
@@ -953,6 +972,7 @@ int main(int argc, char **argv)
     test_without_codecs();
     test_regressions();
     test_ubi_small_leb();
+    test_ubifs_xattr_index();
     test_ubifs_journal();
     test_ubifs_refusals();
     test_open_file();
